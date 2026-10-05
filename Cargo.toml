@@ -5,7 +5,9 @@ edition = "2024"
 description = "A netease cloud music client (GBLMX fork)"
 repository = "https://github.com/GBLMX/pigma"
 license = "Apache-2.0"
-authors = ["akirco <earlfx@163.com>", "GBLMX <GBLMX@users.noreply.github.com>"]
+# `authors` 已按 Cargo 官方文档弃用（"Warning: This field is deprecated"），
+# 且没有任何代码读取 CARGO_PKG_AUTHORS（无 clap crate_authors!()）。
+# 署名见 README 的「上游 / 本仓库」一节与 LICENSE。
 
 [workspace]
 # First-party crates live in one workspace so a single lockfile resolves them and
@@ -79,6 +81,7 @@ tracing-appender = "0.2.5"
 tracing-subscriber = { version = "0.3.23", default-features = false, features = ["fmt", "local-time", "tracing-log"] }
 unicode-width = "0.2.2"
 url = { workspace = true }
+zbus = { version = "5.19.0", features = ["tokio"] }
 # dhat = "0.3.3"
 
 [dev-dependencies]

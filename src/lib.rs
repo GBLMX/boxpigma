@@ -45,6 +45,7 @@ pub mod ipc;
 pub mod key;
 pub mod layout;
 pub mod logger;
+pub mod mpris;
 pub mod playback;
 pub mod service;
 pub mod state;

@@ -136,6 +136,9 @@ pub enum IpcEvent {
     },
     Clear,
     Mode,
+    /// Set the play mode outright (rather than cycling it). Not a `msg` action: MPRIS
+    /// `LoopStatus`/`Shuffle` are the only caller, and they cannot cycle.
+    SetMode(crate::playback::PlayMode),
     Like,
     Dislike,
     ToggleLike,

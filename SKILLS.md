@@ -220,6 +220,45 @@ socket 路径可用 `--socket <path>` 自定义。
 
 ---
 
+## 桌面媒体会话（MPRIS）
+
+除 socket 之外，TUI 与守护进程都在会话总线上提供 `org.mpris.MediaPlayer2.boxpigma`
+（对象路径 `/org/mpris/MediaPlayer2`，两个接口：`org.mpris.MediaPlayer2` 与
+`.Player`），命令走的是与 `boxpigma msg` 同一套实现：`playerctl`、KDE / GNOME 的媒体
+控件、键盘与蓝牙耳机媒体键都能用它控制播放，属性里带封面 `mpris:artUrl`
+（指向封面缓存文件）。
+
+```bash
+playerctl -p boxpigma play-pause        # 播放/暂停（同 msg toggle-play）
+playerctl -p boxpigma next             # 下一首（同 msg next）
+playerctl -p boxpigma volume 0.4       # 绝对音量（同 msg volume 0.4）
+playerctl -p boxpigma position 90      # 跳到 90 秒（同 msg seek 90）
+playerctl -p boxpigma loop Track       # 单曲循环（只有 MPRIS 能直接设，`msg` 只能轮换）
+playerctl -p boxpigma metadata --format '{{title}} – {{artist}}'
+
+busctl --user introspect org.mpris.MediaPlayer2.boxpigma /org/mpris/MediaPlayer2
+busctl --user call org.mpris.MediaPlayer2.boxpigma /org/mpris/MediaPlayer2 \
+    org.mpris.MediaPlayer2 Quit        # 退出（同 `q`，含会话保存与 cookie 落盘）
+```
+
+与 MPRIS 名词对不上的地方（刻意如此）：
+
+| MPRIS | 本程序 |
+|---|---|
+| `Stop` | 跳到 0 秒再暂停：队列没有独立的「已停止」态 |
+| `LoopStatus` / `Shuffle` | 是「顺序 / 单曲 / 列表 / 随机 / 心动」五个模式里的两位。心动上报为 `Playlist` + `Shuffle`；写这两个属性会按它们拼出的模式离开心动（`msg mode` 仍然是轮换） |
+| `Position` | 可读、不广播（规范如此：客户端自己轮询）；`Seeked` 在 seek 后发出 |
+| `OpenUri` / `Raise` | 空实现 |
+
+会话总线不可用（无 `DBUS_SESSION_BUS_ADDRESS`、私有 bus、权限被拒）时只写一行
+`MPRIS 媒体会话不可用` 警告，播放不受影响。
+
+同一台机器上跑第二个实例时，**新实例接管**这个名字（zbus 的 `Builder::name()` 默认带
+`ReplaceExisting` + `AllowReplacement`，与 mpv、浏览器一致），先启动的那个收到 `NameLost`
+后不再持有媒体会话——它自己的播放与 IPC 照常，只是媒体键、浮层归最新实例。
+
+---
+
 ## 端点参考（与导航项一致）
 
 | 端点 | 类型 | 说明 |

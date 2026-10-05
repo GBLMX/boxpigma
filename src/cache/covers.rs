@@ -15,6 +15,13 @@ impl CacheManager {
             .flatten()
     }
 
+    /// The file a cached cover lives in, when one has been cached — what MPRIS hands the
+    /// desktop as `mpris:artUrl`.
+    pub fn cached_cover(&self, song_id: u64) -> Option<PathBuf> {
+        let path = self.cover_path(song_id);
+        path.is_file().then_some(path)
+    }
+
     pub fn save_cover(&self, song_id: u64, data: &[u8]) {
         if let Err(e) = fs::create_dir_all(&self.covers_dir) {
             log::warn!("Failed to create covers cache dir: {e}");

@@ -719,10 +719,16 @@ impl PlaybackEngine {
         next
     }
 
-    pub(super) fn set_mode(&mut self, mode: PlayMode) {
+    pub fn set_mode(&mut self, mode: PlayMode) {
         self.state.mode = mode;
         self.strategy =
             mode::create_strategy(&self.state.mode, self.queue.len(), self.queue.current_index);
+    }
+
+    /// The file the cached cover for `song_id` lives in, if it has been cached — what the
+    /// desktop media session hands clients as `mpris:artUrl`.
+    pub fn cached_cover(&self, song_id: u64) -> Option<std::path::PathBuf> {
+        self.source.cache.cached_cover(song_id)
     }
 
     fn handle_finished(&mut self) {

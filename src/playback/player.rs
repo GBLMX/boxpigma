@@ -130,10 +130,6 @@ impl Output {
     fn resume(&self) {
         self.0.play();
     }
-
-    fn set_volume(&self, volume: f32) {
-        self.0.set_volume(volume);
-    }
 }
 
 /// The rate the open device runs at, which is what the file's rate has to be converted to.
@@ -170,6 +166,10 @@ pub(super) fn run(
         let mut last_pos = Duration::default();
         let mut stall_ticks: u32 = 0;
         let mut player: Option<Output> = None;
+        // The level of the stream currently playing; `None` while nothing is loaded. See
+        // [`chain::Gain`]: the sink's volume stays at 1.0 and every level change — including
+        // pause and resume — is this one number walking to its target.
+        let mut gain: Option<chain::GainHandle> = None;
         // Default-device following state (see FOLLOW_POLL_TICKS).
         let mut sink_dev_id: Option<String> = None;
         let mut follow_poll: u32 = 0;
@@ -231,11 +231,20 @@ pub(super) fn run(
                             Some(rate) => chain::build(source, rate, &dsp),
                             None => source,
                         };
+                        // A fresh stream starts silent and walks up to `volume`: that is what
+                        // keeps a seek, a song change or a device rebuild from starting
+                        // mid-waveform (a click). The tap stays inside the gain so the bars
+                        // keep showing the recording rather than the volume setting.
+                        let stream_gain = chain::GainHandle::new(0.0, volume);
                         let p = rodio::Player::connect_new(
                             &sink.as_ref().expect("sink ensured").mixer().clone(),
                         );
-                        p.set_volume(volume);
-                        p.append(SpectrumTap::new(source, spectrum::buffer()));
+                        p.set_volume(1.0);
+                        p.append(chain::gain(
+                            Box::new(SpectrumTap::new(source, spectrum::buffer())),
+                            stream_gain.clone(),
+                        ));
+                        gain = Some(stream_gain);
                         last_pos = Duration::default();
                         stall_ticks = 0;
                         Some(Output(p))
@@ -297,10 +306,12 @@ pub(super) fn run(
             match control_rx.recv_timeout(progress_interval) {
                 Ok(cmd) => match cmd {
                     ControlCmd::Switch(input, seek_time) => {
-                        if let Some(ref p) = player {
+                        fade_out(player.as_ref(), gain.as_ref());
+                        if let Some(p) = &player {
                             p.stop();
                         }
                         drop(player.take());
+                        gain = None;
                         reader = input;
                         if ensure_sink!() {
                             player = start_playback!(seek_time);
@@ -312,10 +323,12 @@ pub(super) fn run(
                         if player.is_none() {
                             continue;
                         }
-                        if let Some(ref p) = player {
+                        fade_out(player.as_ref(), gain.as_ref());
+                        if let Some(p) = &player {
                             p.stop();
                         }
                         drop(player.take());
+                        gain = None;
                         let _ = reader.0.lock().map(|mut r| r.seek(SeekFrom::Start(0)));
                         if !ensure_sink!() {
                             player = None;
@@ -324,10 +337,12 @@ pub(super) fn run(
                         player = start_playback!(Some(seek_time));
                     }
                     ControlCmd::Stop => {
-                        if let Some(ref p) = player {
+                        fade_out(player.as_ref(), gain.as_ref());
+                        if let Some(p) = &player {
                             p.stop();
                         }
                         drop(player.take());
+                        gain = None;
                         reader = SharedReader(Arc::new(Mutex::new(Box::new(std::io::empty()))));
                         total_duration = None;
                         seek_offset = Duration::default();
@@ -335,19 +350,24 @@ pub(super) fn run(
                         log::info!("[HEAP] after ControlCmd::Stop: {} kB", mem_rss_kb());
                     }
                     ControlCmd::Pause => {
-                        if let Some(ref p) = player {
+                        if let Some(p) = &player {
+                            fade_out(Some(p), gain.as_ref());
                             p.pause();
                         }
                     }
                     ControlCmd::Resume => {
-                        if let Some(ref p) = player {
+                        if let Some(p) = &player {
                             p.resume();
+                            // Walk back up from wherever the fade-out left the level.
+                            if let Some(g) = &gain {
+                                g.set_target(volume);
+                            }
                         }
                     }
                     ControlCmd::SetVolume(v) => {
                         volume = v;
-                        if let Some(ref p) = player {
-                            p.set_volume(v);
+                        if let Some(g) = &gain {
+                            g.set_target(v);
                         }
                     }
                 },
@@ -404,6 +424,7 @@ pub(super) fn run(
                     let _ = event_tx.send(PlaybackEvent::Finished.into());
                     p.stop();
                     drop(player.take());
+                    gain = None;
                     total_duration = None;
                     seek_offset = Duration::default();
                     #[cfg(all(target_os = "linux", target_env = "gnu"))]
@@ -455,6 +476,41 @@ pub(super) fn run(
 /// timestamps are written by the stream error callback.
 fn underrun_now(epoch: &std::time::Instant) -> u64 {
     epoch.elapsed().as_millis() as u64
+}
+
+/// How long to keep the stream running after the ramp has been asked to reach silence.
+///
+/// The ramp is applied where the samples are *produced*, and those samples then sit in the
+/// device buffer until the callback that plays them runs — so a pause issued the moment the
+/// ramp reports silence would throw that buffer away and cut the sound before the fade was
+/// heard. cpal reports `BufferSize::Default` for the backends here (no frame count to
+/// compute from), so this is the usual size of that buffer: enough for the default ALSA and
+/// PipeWire periods, and small enough that pausing still feels immediate.
+const DEVICE_BUFFER_MS: u64 = 40;
+
+/// Walk the current stream down to silence and wait for it to get there.
+///
+/// Cutting a stream while the samples are still swinging is what a click is, so anything
+/// that stops the current sound — pausing, seeking, switching songs, clearing the queue —
+/// asks for silence first and only then stops the player. The wait is bounded: a stream that
+/// is not pulling samples (already paused, stalled on the network, run out) publishes
+/// nothing, and the control loop must not hang on it.
+fn fade_out(player: Option<&Output>, gain: Option<&chain::GainHandle>) {
+    let (Some(player), Some(gain)) = (player, gain) else {
+        return;
+    };
+    if player.is_paused() {
+        return;
+    }
+    gain.set_target(0.0);
+    let budget = u64::from(chain::GAIN_FADE_MS) + DEVICE_BUFFER_MS + 8;
+    let deadline = Instant::now() + Duration::from_millis(budget);
+    while gain.current() > 1e-3 && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(1));
+    }
+    // The ramp reached silence; let the samples that are already in the buffer play out at
+    // that level before the caller stops the stream.
+    std::thread::sleep(Duration::from_millis(DEVICE_BUFFER_MS));
 }
 
 /// Identifier of the current system default output device, used to detect when

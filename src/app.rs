@@ -84,6 +84,10 @@ pub struct App {
     pub status: Arc<Mutex<StatusSnapshot>>,
     /// Live playback queue served to `boxpigma status -L` over the IPC socket.
     pub queue: Arc<Mutex<QueueSnapshot>>,
+    /// Desktop media session: the properties published to MPRIS alongside the IPC snapshot.
+    pub mpris: crate::mpris::MprisHandle,
+    /// The D-Bus half of that session; whichever run loop starts takes it and spawns it.
+    mpris_service: Option<crate::mpris::MprisService>,
     /// Fan-out channel for snapshot changes, consumed by the IPC `subscribe`
     /// handler so long-running clients get event push.
     status_tx: tokio::sync::broadcast::Sender<StatusSnapshot>,
@@ -257,6 +261,9 @@ impl App {
             config.search_limit as usize,
         ));
         let (status_tx, _status_rx) = tokio::sync::broadcast::channel(16);
+        // Created here, started by a run loop: `App::new` is also called from tests, where
+        // there is no tokio runtime and no session bus to connect to.
+        let (mpris, mpris_service) = crate::mpris::MprisHandle::new();
         Ok(Self {
             config,
             service: service.clone(),
@@ -287,6 +294,8 @@ impl App {
             queued_playlists: HashSet::new(),
             status: Arc::new(Mutex::new(StatusSnapshot::default())),
             queue: Arc::new(Mutex::new(QueueSnapshot::default())),
+            mpris,
+            mpris_service: Some(mpris_service),
             status_tx,
             last_status_broadcast: Instant::now(),
             // Force the first `update_status_snapshot` to populate the queue,
@@ -304,6 +313,19 @@ impl App {
         self.playback.save_session();
         self.service.client().flush_cookies();
         self.state.running = false;
+    }
+
+    /// Start the desktop media session (MPRIS) on the session bus.
+    ///
+    /// Both run loops call this: a media session that only worked in one of them would make
+    /// `playerctl` and the media keys work or not depending on how the player was started.
+    /// A session bus that is missing, private, or already has a boxpigma on it is a warning
+    /// from the service task, not a reason not to play music.
+    fn start_mpris(&mut self) {
+        let Some(service) = self.mpris_service.take() else {
+            return;
+        };
+        tokio::spawn(service.run(self.state.events.sender()));
     }
 
     /// Say something. A confirmation: it lingers for its level's time and the newest wins.
@@ -387,6 +409,13 @@ impl App {
     fn update_status_snapshot(&mut self) {
         self.playback.update_analysis();
         let snapshot = StatusSnapshot::from_playback(&self.playback.state);
+        // The desktop media session reports the same status the socket serves; the cover is
+        // only interesting to it, so it is looked up here rather than carried in the snapshot.
+        let art_url = (snapshot.id != 0)
+            .then(|| self.playback.cached_cover(snapshot.id))
+            .flatten();
+        self.mpris
+            .update(&snapshot, self.playback.state.mode, art_url);
         let mut changed = false;
         if let Ok(mut stored) = self.status.lock() {
             changed = stored.meaningfully_differs(&snapshot);
@@ -478,6 +507,13 @@ impl App {
                 let (_, label) = crate::playback::mode_icon(&mode);
                 self.toast(format!("播放模式: {label}"));
             }
+            // Not reachable from `boxpigma msg` (which only cycles): the desktop media
+            // session sets `LoopStatus`/`Shuffle` outright.
+            IpcEvent::SetMode(mode) => {
+                self.playback.set_mode(mode);
+                let (_, label) = crate::playback::mode_icon(&mode);
+                self.toast(format!("播放模式: {label}"));
+            }
             IpcEvent::Like => {
                 if let Some(song) = self.playback.current_song() {
                     self.state
@@ -541,6 +577,7 @@ impl App {
     /// the UI, serves the IPC socket, and pumps the event loop until quit.
     pub async fn run(mut self, mut terminal: DefaultTerminal) -> color_eyre::Result<()> {
         self.start_splash_boot();
+        self.start_mpris();
         let _ipc_guard = crate::ipc::start_server(
             Arc::clone(&self.status),
             Arc::clone(&self.queue),
@@ -628,6 +665,7 @@ impl App {
         playlist_index: Option<usize>,
     ) -> color_eyre::Result<()> {
         self.state.navigation.page = Page::Main;
+        self.start_mpris();
         let _ipc_guard = crate::ipc::start_server(
             Arc::clone(&self.status),
             Arc::clone(&self.queue),

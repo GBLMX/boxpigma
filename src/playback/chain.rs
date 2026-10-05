@@ -9,7 +9,14 @@
 //! running at the file's rate and no EQ or normalization configured, the decoded samples reach
 //! the sink untouched — the bit-perfect path.
 
-use std::{num::NonZero, time::Duration};
+use std::{
+    num::NonZero,
+    sync::{
+        Arc,
+        atomic::{AtomicU32, Ordering},
+    },
+    time::Duration,
+};
 
 use biquad::{Biquad, Coefficients, DirectForm1, ToHertz, Type};
 use ebur128::{EbuR128, Mode};
@@ -485,11 +492,162 @@ impl<S: Source<Item = Sample>> Source for Loudness<S> {
     }
 }
 
+/* -------------------------------------------------------------------------- */
+/*                                  gain ramp                                */
+/* -------------------------------------------------------------------------- */
+
+/// How long a gain change takes, in milliseconds.
+///
+/// Every change of level — a volume step, pausing, resuming, seeking, switching songs — is
+/// a step in the waveform where the samples used to jump from one amplitude to another, and
+/// a step in the waveform is a click. Walking to the new level instead of jumping to it is
+/// what the audio world calls a fade; 12 ms is short enough that pausing and the volume keys
+/// still feel immediate, long enough to be inaudible as a glide.
+pub(super) const GAIN_FADE_MS: u32 = 12;
+
+/// Samples between two updates of the published current gain.
+///
+/// The control loop waits for the ramp to reach zero before it pauses or switches the
+/// stream (see `fade_out` in [`super::player`]), and that wait only needs to be accurate to
+/// a holler, so the audio thread publishes its position every few dozen samples rather than
+/// taking a lock or an atomic write per sample.
+const GAIN_PUBLISH_SAMPLES: u32 = 64;
+
+/// The level of one stream, shared between the audio thread that applies it and the control
+/// loop that asks for a change.
+///
+/// Two numbers, both `f32` in an atomic: the level being asked for (the user's volume, or
+/// zero while pausing) and where the ramp has actually got to. The second one is what makes
+/// "fade out, then pause" possible — pausing on the spot would cut the samples mid-wave and
+/// undo the fade.
+#[derive(Clone, Debug)]
+pub(super) struct GainHandle {
+    target: Arc<AtomicU32>,
+    current: Arc<AtomicU32>,
+}
+
+impl GainHandle {
+    /// A handle whose ramp starts at `initial` and walks toward `target` — a fresh stream
+    /// starts at zero so it fades in rather than starting mid-amplitude.
+    pub(super) fn new(initial: f32, target: f32) -> Self {
+        Self {
+            target: Arc::new(AtomicU32::new(target.to_bits())),
+            current: Arc::new(AtomicU32::new(initial.to_bits())),
+        }
+    }
+
+    /// Ask for a new level; the ramp walks there at its own speed.
+    pub(super) fn set_target(&self, gain: f32) {
+        self.target.store(gain.to_bits(), Ordering::Relaxed);
+    }
+
+    fn target(&self) -> f32 {
+        f32::from_bits(self.target.load(Ordering::Relaxed))
+    }
+
+    /// Where the ramp has got to, as last published by the audio thread.
+    pub(super) fn current(&self) -> f32 {
+        f32::from_bits(self.current.load(Ordering::Relaxed))
+    }
+}
+
+/// The gain stage: multiplies every sample by a level that walks toward the handle's target.
+///
+/// This is the stream's only volume — the sink's own volume stays at 1.0 so there is one
+/// place where the level changes, and that place ramps.
+pub(super) struct Gain<S> {
+    inner: S,
+    handle: GainHandle,
+    /// The level this stage is currently at; the audio thread's copy of `handle.current`.
+    value: f32,
+    /// How much the level moves per sample: a full 0..1 walk takes [`GAIN_FADE_MS`].
+    step: f32,
+    /// Samples left before the next publication of `value`.
+    until_publish: u32,
+}
+
+impl<S: Source<Item = Sample>> Gain<S> {
+    pub(super) fn new(inner: S, handle: GainHandle) -> Self {
+        let samples_per_fade = f64::from(GAIN_FADE_MS)
+            * f64::from(inner.sample_rate().get())
+            * f64::from(inner.channels().get())
+            / 1000.0;
+        Self {
+            value: handle.current(),
+            step: if samples_per_fade >= 1.0 {
+                (1.0 / samples_per_fade) as f32
+            } else {
+                1.0
+            },
+            inner,
+            handle,
+            until_publish: 0,
+        }
+    }
+}
+
+impl<S: Source<Item = Sample>> Iterator for Gain<S> {
+    type Item = Sample;
+
+    fn next(&mut self) -> Option<Sample> {
+        let sample = self.inner.next()?;
+        // The level is applied *before* it moves, so the very first sample of a stream is
+        // exactly the initial level — silence on a fresh stream, which is the point.
+        let out = sample * self.value;
+
+        let target = self.handle.target();
+        let walking = self.value != target;
+        if self.value < target {
+            self.value = (self.value + self.step).min(target);
+        } else if self.value > target {
+            self.value = (self.value - self.step).max(target);
+        }
+
+        // Publish on arrival as well as periodically: whoever is waiting for the ramp to
+        // reach silence (see `fade_out`) should not have to wait out the rest of an interval.
+        let arrived = walking && self.value == target;
+        if arrived || self.until_publish == 0 {
+            self.until_publish = GAIN_PUBLISH_SAMPLES;
+            self.handle
+                .current
+                .store(self.value.to_bits(), Ordering::Relaxed);
+        } else {
+            self.until_publish -= 1;
+        }
+        Some(out)
+    }
+}
+
+impl<S: Source<Item = Sample>> Source for Gain<S> {
+    fn current_span_len(&self) -> Option<usize> {
+        self.inner.current_span_len()
+    }
+    fn channels(&self) -> ChannelCount {
+        self.inner.channels()
+    }
+    fn sample_rate(&self) -> SampleRate {
+        self.inner.sample_rate()
+    }
+    fn total_duration(&self) -> Option<Duration> {
+        self.inner.total_duration()
+    }
+    fn try_seek(&mut self, position: Duration) -> Result<(), rodio::source::SeekError> {
+        // The level belongs to the stream, not to the position in it: seeking inside one
+        // stream keeps the current level instead of fading in again.
+        self.inner.try_seek(position)
+    }
+}
+
+/// Wrap `source` in the gain stage driven by `handle`.
+pub(super) fn gain(source: Processed, handle: GainHandle) -> Processed {
+    Box::new(Gain::new(source, handle))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
-    /// A source of `frames` frames of silence at a set rate, so the resampler can be exercised
+    /// A source of `frames` frames of silence, so the resampler can be exercised
     /// without a decoder or a device.
     #[derive(Debug)]
     struct Silence {
@@ -697,6 +855,146 @@ mod tests {
         assert!(
             Resample::new(source, 48_000).is_err(),
             "a matching rate comes straight back, unwrapped"
+        );
+    }
+
+    /// A source that hands out `1.0` samples, so the samples that come out of the gain stage
+    /// *are* the level it is applying.
+    #[derive(Debug)]
+    struct Ones {
+        rate: SampleRate,
+        channels: ChannelCount,
+        left: usize,
+    }
+
+    impl Ones {
+        fn new(frames: usize, channels: u16, rate: u32) -> Self {
+            Self {
+                rate: NonZero::new(rate).expect("rate"),
+                channels: NonZero::new(channels).expect("channels"),
+                left: frames * usize::from(channels),
+            }
+        }
+    }
+
+    impl Iterator for Ones {
+        type Item = Sample;
+
+        fn next(&mut self) -> Option<Sample> {
+            if self.left == 0 {
+                return None;
+            }
+            self.left -= 1;
+            Some(1.0)
+        }
+    }
+
+    impl Source for Ones {
+        fn current_span_len(&self) -> Option<usize> {
+            None
+        }
+        fn channels(&self) -> ChannelCount {
+            self.channels
+        }
+        fn sample_rate(&self) -> SampleRate {
+            self.rate
+        }
+        fn total_duration(&self) -> Option<Duration> {
+            None
+        }
+    }
+
+    fn fade_samples(rate: u32, channels: u16) -> usize {
+        (GAIN_FADE_MS * rate * u32::from(channels) / 1000) as usize
+    }
+
+    /// A stream that starts mid-amplitude is a click; a fresh one walks up from silence and
+    /// lands exactly on the level it was asked for.
+    #[test]
+    fn a_fresh_stream_fades_in_and_settles() {
+        let handle = GainHandle::new(0.0, 0.75);
+        let samples: Vec<f32> = Gain::new(Ones::new(4_000, 2, 48_000), handle.clone()).collect();
+
+        assert_eq!(
+            samples[0], 0.0,
+            "the first sample is silence, not the target"
+        );
+        for pair in samples.windows(2) {
+            assert!(
+                pair[1] >= pair[0],
+                "the walk up must not dip: {} -> {}",
+                pair[0],
+                pair[1]
+            );
+            assert!(
+                pair[1] - pair[0] <= 2.0 / fade_samples(48_000, 2) as f32,
+                "no jump larger than a step: {} -> {}",
+                pair[0],
+                pair[1]
+            );
+        }
+
+        let settled = samples[fade_samples(48_000, 2)];
+        assert!(
+            (settled - 0.75).abs() < 1e-3,
+            "one fade after the start the level is the target, got {settled}"
+        );
+        assert!(
+            (samples[samples.len() - 1] - 0.75).abs() < 1e-6,
+            "and it stays there: {}",
+            samples[samples.len() - 1]
+        );
+    }
+
+    /// What `fade_out` in the player depends on: asking for zero gets there, in one fade, and
+    /// the published level says so.
+    #[test]
+    fn a_change_walks_to_the_new_level_and_reports_it() {
+        let handle = GainHandle::new(1.0, 1.0);
+        let mut stage = Gain::new(Ones::new(4_000, 2, 48_000), handle.clone());
+
+        let settled: Vec<f32> = (0..64).map(|_| stage.next().unwrap()).collect();
+        assert!(
+            settled.iter().all(|s| (*s - 1.0).abs() < 1e-6),
+            "already at the target"
+        );
+
+        handle.set_target(0.0);
+        let ramp: Vec<f32> = (0..fade_samples(48_000, 2) + 2)
+            .map(|_| stage.next().unwrap())
+            .collect();
+
+        for pair in ramp.windows(2) {
+            assert!(
+                pair[0] - pair[1] <= 2.0 / fade_samples(48_000, 2) as f32,
+                "descending is also a ramp, not a cut: {} -> {}",
+                pair[0],
+                pair[1]
+            );
+            assert!(pair[1] <= pair[0], "and never rises on the way down");
+        }
+        assert_eq!(
+            &ramp[ramp.len() - 2..],
+            &[0.0, 0.0],
+            "the walk ends at silence and stays there"
+        );
+        assert!(
+            handle.current() < 1e-3,
+            "the published level reaches silence within one fade, got {}",
+            handle.current()
+        );
+    }
+
+    /// A ramp that turned into an oscillation would hum; the level has to stop at its target.
+    #[test]
+    fn the_walk_stops_at_the_target() {
+        let handle = GainHandle::new(0.0, 0.5);
+        let samples: Vec<f32> = Gain::new(Ones::new(2_000, 1, 48_000), handle).collect();
+        let after = &samples[fade_samples(48_000, 1)..];
+        assert!(
+            after.iter().all(|s| (*s - 0.5).abs() < 1e-6),
+            "no ringing around the target: {:?}",
+            &after[..8.min(after.len())]
         );
     }
 }
