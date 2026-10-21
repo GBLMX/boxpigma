@@ -3,9 +3,10 @@
 #
 # 安装布局（版本化 + 原子切换）：
 #
-#   <dir>/releases/<版本>-<目标平台>/boxpigma   每个版本各占一个目录，互不覆盖
-#   <dir>/current                              符号链接，指向当前使用的版本
-#   <dir>/install.lock                         纯文本，记录当前版本、安装时间与版本历史
+#   <dir>/releases/<版本>-<目标平台>/boxpigma        每个版本各占一个目录，互不覆盖
+#   <dir>/releases/<版本>-<目标平台>/boxpigma-gui    桌面前端（随压缩包一起安装）
+#   <dir>/current                                   符号链接，指向当前使用的版本
+#   <dir>/install.lock                              纯文本，记录当前版本、安装时间与版本历史
 #
 # 用法：
 #
@@ -120,7 +121,7 @@ detect_target() {
 
 TARGET="$(detect_target)"
 
-# 两个 Linux 目标的压缩包都是 tar.gz，里面只有一个叫 boxpigma 的文件。
+# 两个 Linux 目标的压缩包都是 tar.gz，里面是 boxpigma 与 boxpigma-gui。
 case "$TARGET" in
     *-linux-gnu) ASSET="boxpigma-$TARGET.tar.gz" ;;
     *) die "没有 $TARGET 对应的发布资产" ;;
@@ -322,6 +323,9 @@ finish_install() {
     prune_versions "$rel"
 
     log "  已安装     $RELEASES/$rel/$BIN"
+    if [ -f "$RELEASES/$rel/$BIN-gui" ]; then
+        log "  桌面界面   $INSTALL_DIR/current/$BIN-gui"
+    fi
     log "  版本       $num"
     log "  current    $CURRENT_LINK -> releases/$rel"
     log "  可执行     $INSTALL_DIR/current/$BIN"
@@ -388,6 +392,7 @@ log "install.sh: $REPO $VERSION"
 log "  platform   $(uname -s) $(uname -m) -> $TARGET"
 log "  asset      $ASSET_URL"
 log "  install    $RELEASES/${VERSION_NUM:-<下载后确定>}-$TARGET/$BIN"
+log "  desktop    $RELEASES/${VERSION_NUM:-<下载后确定>}-$TARGET/$BIN-gui"
 log "  current    $CURRENT_LINK"
 log "  verify     $CHECKSUMS"
 
@@ -548,6 +553,10 @@ if [ ! -f "$STAGING/$BIN" ]; then
     die "压缩包里没有 $BIN"
 fi
 chmod 755 "$STAGING/$BIN"
+# The desktop frontend is optional for older release archives, but current ones ship it.
+if [ -f "$STAGING/$BIN-gui" ]; then
+    chmod 755 "$STAGING/$BIN-gui"
+fi
 
 if [ -z "$VERSION_NUM" ]; then
     # --version latest：这时候才知道装的是哪个版本。

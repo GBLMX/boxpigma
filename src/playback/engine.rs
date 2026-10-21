@@ -800,6 +800,12 @@ impl PlaybackEngine {
         self.source.set_save_on_play(enabled);
     }
 
+    /// Change the quality for the next resolved stream. The current track is
+    /// unaffected.
+    pub fn set_quality(&mut self, quality: ncm_api::SongQuality) {
+        self.source.set_quality(quality);
+    }
+
     fn restore_session(&mut self) {
         if let Some(id) = self.storage.load_active_id() {
             let display = self

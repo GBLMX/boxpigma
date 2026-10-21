@@ -1,6 +1,6 @@
 [package]
 name = "boxpigma"
-version = "1.6.3"
+version = "1.7.0"
 edition = "2024"
 description = "A netease cloud music client (GBLMX fork)"
 repository = "https://github.com/GBLMX/pigma"
@@ -48,6 +48,15 @@ ebur128 = "0.1.10"
 # keeps that pure Rust, so no C toolchain is needed to build.
 flate2 = { version = "1.1.10", default-features = false, features = ["rust_backend"] }
 futures = { version = "0.3.33", default-features = false, features = ["async-await", "std"] }
+# The actor contract is owned by the Ferriso framework; pin the revision so a
+# release build resolves the same code.
+ferriso-core = { git = "https://github.com/GBLMX/Ferriso", rev = "2799496147a5e9222cf01cab84214714b235b6d0", package = "ferriso-core" }
+ferriso-gui = { git = "https://github.com/GBLMX/Ferriso", rev = "2799496147a5e9222cf01cab84214714b235b6d0", package = "ferriso-gui" }
+# The desktop frontend (`src/bin/boxpigma-gui`). `image-without-codecs` adds the image widget
+# (JPEG decoding comes from this crate's own `image` dependency above), `qr_code` draws the
+# NetEase login QR (the API only offers QR/phone login), and `tokio` gives iced a tokio executor
+# plus `iced::time::every` — the GUI drains the playback event channel on that tick.
+iced = { version = "0.14", features = ["image-without-codecs", "qr_code", "tokio"] }
 image = { version = "0.25.10", default-features = false, features = ["jpeg"] }
 # `SIGPIPE` handling (src/cli.rs): Rust ignores the signal, so the CLI restores the default.
 libc = "0.2.189"

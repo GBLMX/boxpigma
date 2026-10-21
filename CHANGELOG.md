@@ -1,5 +1,11 @@
 ## [unreleased]
 
+## [1.7.0] - 2026-10-21
+
+### 🚀 Features
+
+- *(gui)* **桌面界面 `boxpigma-gui`（iced 0.14）**：在共享后端上补齐配置导航树、歌单/专辑/电台/排行榜详情、歌手页、单曲/歌单/歌手/专辑四类搜索、分页加载、播放队列、歌词与 MV 海报、二维码/密码/短信登录与签到、喜欢/下一首/上传云盘、主题/音质/边听边存/通知/译文/频谱/音高设置，以及带封面、进度拖动、音量、实时频谱和播放模式的底部播放条；切歌/出错按 `[notify]` 调 `notify-send`。窗口只渲染快照，后端由 `boxpigma::backend` 的 actor 独占；配置、cookie、封面/歌词/队列缓存与 TUI/守护进程共用。快捷键只在带 `Ctrl` 时生效（`Ctrl+空格` 播放/暂停、`Ctrl+←/→` 切歌、`Ctrl+L` 喜欢、`Ctrl+M` 模式）。
+
 ### 🐛 Bug Fixes
 
 - *(terminal)* **tuios 窗格里封面画不出来，启动还要白等两秒**：tuios（终端工作区管理器）和 herdr 一样把窗格里的终端**自己仿真**了 —— 它只解析 kitty 图形协议、再自己画到外层终端 —— 而窗格里的进程带着的是**外层**终端的变量（`TERM_PROGRAM`、`KITTY_PID` 都是外层的）。封面协议本应由「问终端」定，可 tuios 的回答是私有形式 `CSI ? 0 n`（标准是 `CSI 0 n`），`ratatui-image` 的回答解析器只认后者，于是 `Picker::from_query_stdio()` **永远不返回**：查询线程停在 `read()` 里直到进程退出，boxpigma 那 2 秒预算到点只换来一句 WARN 和半块字符画。现在 tuios 窗格内**不问**：据 `TUIOS_ENV`（tuios 在每个窗格都设）先于外层终端那条修正判定，一律用 kitty —— 与 1.6.1 的 herdr 同一套处理，因为窗格里的变量同样会骗过 `TERM_PROGRAM` 修正（daemon 从 WezTerm 起，窗格里就会读出 WezTerm）；格子尺寸改从窗格自己的 pty 读，tuios 把**客户端**格子的像素尺寸写进 `TIOCGWINSZ` 的像素字段（实测 0.8.1：18x6 格、客户端格子 10x22 px 的窗格报 180x132 px，与 daemon 日志里该客户端的 `cell=10x22 pixels` 一致），所以封面按真实格子缩放，而不是库的 10x20 猜测；pixel 字段要等客户端把窗格布局完才写进去（实测新建窗格 t=0 报 0x0、t=0.34s 才报 10x22），读不到时会重读，最多等 0.5 秒
@@ -30,6 +36,10 @@
 - *(config,cache)* **配置与缓存索引是原地覆盖写的**：`Config::save`/`load_from` 与 `cache::index::write_index` 都用 `fs::write` **原地截断** —— 写到一半断电，或另一个进程/下一次启动正好在那一刻读，看到的就是空文件或半截 JSON（配置与整个下载索引一起没了）。`cookie.rs` 早在并发那次修复里换成了"临时文件 + `rename`"，应用侧这两处一直没跟上；现在统一走 `utils::fs::write_atomic`（同目录唯一临时文件 → `sync_all` → `rename`；跨文件系统不原子，所以临时文件必须同目录）。两个单测钉住"整体替换"与"不留临时文件"
 
 ### 🚜 Refactor
+
+- *(tui)* **设置触发器收口到命令表**：`translation` 现在是 `COMMANDS` 的一行（`y` 由 keymap 分发），不再有 `input/main.rs` 里绕过命令表的 `y` 分支；删除未使用的 `CommandEvent::ToggleBordered`，边框只保留 `border` 命令一条路径。设置页新增一致性测试：每一行都必须对应一个可被调色板执行的命令，`y`/`:translation`/设置页共用同一个 `ExCommand` 处理器。
+
+- *(backend)* **按 Ferriso 的 actor 模型抽出 GUI 后端**：新增 `boxpigma::backend`，直接依赖 `ferriso-core` 与 `ferriso-gui`（MIT，Git 上游 2799496）：core 提供 `ActorApp` / `Command` / `CoreHandle` / `Snapshots` / `spawn`，gui 提供 iced adapter（`Renderer` / `Message::Local` / `run_with_app`），一个任务独占 `ApiService`、`PlaybackEngine`、缓存、导航、登录和设置；iced 只持有最新 `Arc<View>` 快照并发送语义 `Message`，不再自己建 runtime、拉接口或操作队列。Tokio runtime、actor 启停和窗口生命周期改由 Ferriso 管理；GUI 由此补齐了配置导航树、歌单/专辑/电台/排行榜详情、歌手页、四类搜索、分页加载、队列切歌/清空、二维码/密码/短信登录与签到、喜欢/加到下一首/上传云盘、主题/音质/边听边存/通知/歌词译文设置；`Backend` 的 tick 统一消费播放事件与登录轮询，关闭窗口时仍走保存队列和 cookie 的 shutdown。
 
 - *(utils)* **"取锁"与"原子写"各收敛到一处**：取锁的 poison 决策此前有四种写法（`unwrap`、`unwrap_or_else(into_inner)`、`if let Ok` 静默跳过、`map_err` 转 `io::Error`），其中 `ipc` 的 `unwrap` 会在别的线程 panic 后把进程带走；原子写则只有 `cookie.rs` 一处。现在 `utils::sync::{mutex,read,write}` 收拢了 `ipc`、`cache/audio`、`cache/index`、`state/avatar`、`state/mv` 的十余处取锁（"其他线程的 panic 与这份数据无关，取走它"只写一遍），`utils::fs::write_atomic` 把"临时文件 + rename"从一个地方供给 `config` 与 `cache/index`；`playback::player` 把 poison 转成 `io::Error` 的刻意例外保留，并在 `utils::sync` 的模块文档里写明为什么它是例外
 

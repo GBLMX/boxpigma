@@ -19,6 +19,10 @@ sha256sums=('4bb198271edc7d96aad0438298d94887ac656037fa18b7b9fabec5b2f81c1d49')
 
 package() {
     install -Dm755 "${srcdir}/${_pkgname}" "${pkgdir}/usr/bin/${_pkgname}"
+    # Newer archives carry the iced desktop frontend; v1.6.3 and older do not.
+    if [ -f "${srcdir}/${_pkgname}-gui" ]; then
+        install -Dm755 "${srcdir}/${_pkgname}-gui" "${pkgdir}/usr/bin/${_pkgname}-gui"
+    fi
 
     # install -Dm644 "${srcdir}/LICENSE" "${pkgdir}/usr/share/licenses/${pkgname}/LICENSE"
 }

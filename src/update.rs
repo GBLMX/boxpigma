@@ -434,6 +434,13 @@ async fn install(client: &Client, layout: &Layout, opts: &Options) -> Result<()>
     use std::os::unix::fs::PermissionsExt;
     fs::set_permissions(&staged_bin, fs::Permissions::from_mode(0o755))
         .map_err(|e| eyre!("改不了 {} 的权限（{e}）", staged_bin.display()))?;
+    // Current release archives carry the iced frontend too. Older ones do not; keep the
+    // updater working with both.
+    let staged_gui = scratch.staging.join(format!("{BIN}-gui"));
+    if staged_gui.is_file() {
+        fs::set_permissions(&staged_gui, fs::Permissions::from_mode(0o755))
+            .map_err(|e| eyre!("改不了 {} 的权限（{e}）", staged_gui.display()))?;
+    }
 
     let number = match &pinned {
         Some(number) => number.clone(),
@@ -810,6 +817,17 @@ impl Layout {
             "  已安装     {}",
             self.releases().join(rel).join(BIN).display()
         );
+        if self
+            .releases()
+            .join(rel)
+            .join(format!("{BIN}-gui"))
+            .is_file()
+        {
+            println!(
+                "  桌面界面   {}",
+                self.current().join(format!("{BIN}-gui")).display()
+            );
+        }
         println!("  版本       {number}");
         println!(
             "  current    {} -> releases/{rel}",

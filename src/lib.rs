@@ -36,6 +36,7 @@ pub(crate) mod bench_util {
 }
 
 pub mod app;
+pub mod backend;
 pub mod cache;
 pub mod cli;
 pub mod config;

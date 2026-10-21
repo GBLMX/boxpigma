@@ -14,6 +14,7 @@
 
 | 方面 | 改前 | 改后 | 依据（实测） | 位置 |
 | --- | --- | --- | --- | --- |
+| GUI 后端状态 | iced 的 `App` 自己持有 `ApiService`、队列、导航和登录状态，与 TUI 各一份；刷新靠窗口内重新拉取接口 | `ferriso-core` 的 actor：一个任务独占后端状态，前端只发语义 `Command`、收 `Arc<View>` 快照 | 歌单详情 100 条、切页、搜索、登录和 64 次空 tick 全走 actor；GUI 不再建第二个 runtime，也不再持有 `ApiService`/`PlaybackEngine`。窗口关闭时 actor 的 `shutdown` 保存队列与 cookie | `src/backend/`、`github.com/GBLMX/Ferriso`（`ferriso-gui` 的 iced adapter） |
 | 日志 | 手写 `log::Log` 实现：`Mutex<File>` 追加写，**无轮转、无上限**，调用线程持锁同步写 | `tracing` + `tracing-subscriber` + `tracing-appender`：按天轮转、保留最近 7 个、行内带模块路径与本地时间 | 旧日志实测已达 **2,892,695 B** 且无上限；替换后**135 个 `log::*!` 调用点一行未改**（`tracing-log` 桥接 `log` 记录） | `src/logger.rs` |
 | 对比度 | 手写 WCAG 亮度/对比度（`relative_luminance` / `contrast_ratio`），且 `ui/contrast_audit.rs` 的审计测试里还有**第三份**拷贝 | `palette` 的 `Wcag21RelativeContrast`；全仓颜色数学收敛到一处 | 全 **2²⁴ 个 8 位 sRGB 颜色**逐值对拍，最大亮度偏差 7.29e-5（palette 用 CIE/Lindbloom 全精度系数，旧代码用 WCAG 取整系数）；**19 个内置主题的 `on_accent` 结果全部一致**；唯一分歧带是黑白锚对比度打平处（合成扫描的 0.005%，可读性相同，无内置主题落在那） | `src/config/theme.rs`、`src/app/theme.rs`、`src/ui.rs`、`src/ui/contrast_audit.rs` |
 | 桌面通知 | 只用 `OSC 9`（单串正文） | kitty 走其自有的 `OSC 99`：标题与正文分开（`p=`）、Base64 负载（`e=1`）、`f=` 声明应用名便于过滤、`i=`/`d=` 分块并避免堆叠 | kitty 官方文档：kitty 实现 `OSC 99`，同时**兼容**旧式 `OSC 9`；其余终端保持 `OSC 9` **逐字节不变**（有测试钉住） | `src/utils/terminal/`（按主题分成 capability / color / background / sequences） |

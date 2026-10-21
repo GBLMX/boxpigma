@@ -73,7 +73,7 @@ jobs:
       - name: Package
         run: |
           cd target/${{ matrix.target }}/release
-          tar czvf ../../../boxpigma-${{ matrix.target }}.tar.gz boxpigma
+          tar czvf ../../../boxpigma-${{ matrix.target }}.tar.gz boxpigma boxpigma-gui
           cd -
 
       - name: Upload build artifact

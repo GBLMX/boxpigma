@@ -173,13 +173,15 @@ boxpigma 把网易云音乐与本地音频播放带进终端：流式播放、�
 curl -fsSL https://raw.githubusercontent.com/GBLMX/pigma/main/install.sh | sh
 ```
 
-脚本自己判定平台：`uname -s`/`uname -m` 映射到发布的目标三元组，musl 会被挡下（只发 `gnu`），下载对应资产、按发布里的 `SHA256SUMS` 校验后装到 `~/.local/bin`。
+脚本自己判定平台：`uname -s`/`uname -m` 映射到发布的目标三元组，musl 会被挡下（只发 `gnu`），下载对应资产、按发布里的 `SHA256SUMS` 校验后装到 `~/.local/bin`；压缩包里的 `boxpigma` 与 `boxpigma-gui` 会一起装好。
 
 装成**版本化布局**，升级不动正在跑的那个：
 
 ```
 ~/.local/bin/
-├── releases/1.4.0-x86_64-unknown-linux-gnu/boxpigma    每个版本各占一个目录
+├── releases/1.4.0-x86_64-unknown-linux-gnu/
+│   ├── boxpigma                                        终端界面与守护进程
+│   └── boxpigma-gui                                    桌面界面（iced）
 ├── current -> releases/1.4.0-x86_64-unknown-linux-gnu  原子切换，指向当前版本
 └── install.lock                                        当前版本、安装时间与版本历史
 ```
@@ -227,7 +229,7 @@ boxpigma update --insecure         # SHA256SUMS 取不到时也装（不做完�
 bin install https://github.com/GBLMX/pigma
 ```
 
-或从 [releases](https://github.com/GBLMX/pigma/releases) 下载 `boxpigma-x86_64-unknown-linux-gnu.tar.gz` 或 `boxpigma-aarch64-unknown-linux-gnu.tar.gz`，解包后把 `boxpigma` 放进 `$PATH`。
+或从 [releases](https://github.com/GBLMX/pigma/releases) 下载 `boxpigma-x86_64-unknown-linux-gnu.tar.gz` 或 `boxpigma-aarch64-unknown-linux-gnu.tar.gz`，解包后把 `boxpigma`（以及可选的 `boxpigma-gui`）放进 `$PATH`。
 
 > `gnu` 构建依赖系统音频库（如 `alsa-lib`）。
 
@@ -245,7 +247,8 @@ cargo install --git https://github.com/GBLMX/pigma.git
 git clone https://github.com/GBLMX/pigma.git
 cd pigma                     # 仓库名仍是 pigma，二进制叫 boxpigma
 cargo build --release
-# binary at target/release/boxpigma
+# 终端界面：target/release/boxpigma
+# 桌面界面：target/release/boxpigma-gui
 ```
 
 ## Usage
@@ -281,6 +284,34 @@ cargo build --release
 | `ctrl+↑/↓/←/→` |  拖面板边界：顶栏/播放条、侧栏尺寸（同鼠标拖拽）  |
 | tab / shift+tab（歌手页） | 在热门曲目 / 专辑 / 相似歌手之间切换光标；`Enter` 按当前栏生效（歌曲播放、专辑打开、相似歌手跳转） |
 | :             |      命令模式（vim 风格，Tab 补全，见下节）     |
+
+### 桌面界面（`boxpigma-gui`）
+
+GUI 的后端已经按 Ferriso 的 actor 模型抽成 `boxpigma::backend`，并直接依赖其
+`ferriso-core` 与 `ferriso-gui`（MIT，Git 依赖，上游 2799496）：一个任务独占
+`ApiService`、`PlaybackEngine`、缓存、登录和导航状态，窗口只发语义消息、收只读快照；
+Tokio runtime、actor 启停和 iced 窗口生命周期都由 Ferriso 的 adapter 管理。
+
+```text
+iced 窗口 ──Message──▶ backend actor ──Arc<View> 快照──▶ iced 窗口
+                          ├─ ApiService / 缓存
+                          └─ PlaybackEngine（队列 + 音频）
+```
+
+```sh
+cargo build --release --bin boxpigma-gui
+./target/release/boxpigma-gui
+```
+
+- 侧栏按 `config.toml` 的 `[navigation]` 动态生成：每日推荐、推荐歌单、热门歌手、排行榜、歌单、电台、搜索，以及我的音乐/云盘/下载/本地音乐/最近播放/听歌排行
+- 内容页统一支持歌曲、歌单、排行榜、歌手、热搜；点歌单/专辑/电台/排行榜打开详情，点歌手打开歌手页（热门歌曲、专辑、相似歌手），分页列表可“加载更多”
+- 搜索可按单曲 / 歌单 / 歌手 / 专辑切换；任意歌曲行都能点歌手、专辑、加到下一首、喜欢、上传云盘
+- 播放队列可切队列、点歌、清空；歌词页支持译文，并在当前歌曲有 MV 时显示海报和简介；登录页有二维码、账号密码、短信、每日签到；设置页可切主题、音质、边听边存、通知、歌词译文、频谱和音高读数
+- 与 TUI/守护进程**共用** `~/.config/boxpigma`（cookie、配置）与 `~/.cache/boxpigma`（封面、歌词、队列、下载缓存）
+- 底部播放条：封面、上一首/播放/下一首、播放模式、喜欢、进度（拖动后松手 seek）、音量、实时频谱；切歌/出错按 `[notify]` 走 `notify-send`
+- 快捷键：`Ctrl+空格` 播放/暂停，`Ctrl+←/→` 上一首/下一首，`Ctrl+L` 喜欢，`Ctrl+M` 切模式，`Ctrl+Y` 译文，`Ctrl+V` 频谱，`Ctrl+P` 音高，`Esc` 返回
+- 需要 Wayland 或 X11；渲染走 `wgpu`（优先 Vulkan，失败时回落 GL），也可用软件渲染
+- TUI 仍保留原有 `App` 与终端渲染；它和 GUI 共用同一份配置、cookie 与缓存文件（不是同一个 `ApiService` 实例），终端 UI 没有为了 actor 重写。Ferriso 的 `ferriso-tui` 已经具备 ratatui adapter，但迁移 pigma 的完整终端界面是后续工作。`:` 命令模式、IPC、MPRIS、终端图形协议仍属于 TUI/守护进程
 
 ### 命令模式（vim 风格）
 
@@ -536,7 +567,8 @@ cat /proc/<pid>/task/*/wchan                   # 内核视角
 ```sh
 git clone https://github.com/GBLMX/pigma.git
 cd pigma
-cargo run                                             # 交互界面
+cargo run                                             # 终端界面
+cargo run --bin boxpigma-gui                          # 桌面界面（iced）
 cargo test --locked --workspace --all-features
 cargo clippy --locked --workspace --all-targets -- -D warnings   # 警告即失败（CI 同）
 cargo test --release --lib -- --ignored --nocapture   # 性能基准

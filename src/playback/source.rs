@@ -280,6 +280,12 @@ impl AudioSource {
         self.save_on_play = enabled;
     }
 
+    /// Change the stream quality used by the next resolve. The current track
+    /// keeps playing; the new level applies when playback moves on.
+    pub(super) fn set_quality(&mut self, quality: ncm_api::SongQuality) {
+        self.quality = quality;
+    }
+
     /// Build stream-download settings that persist the cache entry and notify
     /// the UI once the stream has finished caching to disk. The entry is only
     /// recorded when the download actually completes, so the index never
