@@ -1,7 +1,7 @@
 # Maintainer: GB LMX <GBLMX@users.noreply.github.com>
 pkgname=boxpigma-gblmx-bin
 _pkgname=boxpigma
-pkgver=1.6.3
+pkgver=1.7.0
 pkgrel=1
 pkgdesc="A netease cloud music client (GBLMX fork build)"
 arch=('x86_64')
@@ -15,7 +15,7 @@ conflicts=("${_pkgname}")
 source=("${_pkgname}-${pkgver}.tar.gz::${url}/releases/download/v${pkgver}/${_pkgname}-x86_64-unknown-linux-gnu.tar.gz")
 # Checksum of the release asset referenced above. Nothing computes this automatically: bump it
 # together with `pkgver` (`curl -sSL <the asset> | sha256sum`), or `makepkg` will refuse.
-sha256sums=('4bb198271edc7d96aad0438298d94887ac656037fa18b7b9fabec5b2f81c1d49')
+sha256sums=('4c4fe6a71a38e8e6be39d0d9d3371458216012c9d42f58779d51c27f53e3dffd')
 
 package() {
     install -Dm755 "${srcdir}/${_pkgname}" "${pkgdir}/usr/bin/${_pkgname}"
