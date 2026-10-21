@@ -244,11 +244,6 @@ pub(super) fn handle_main_key(app: &mut App, key_event: KeyPress) -> color_eyre:
         KeyCode::Char('-' | '_') => {
             app.adjust_volume(-0.05);
         }
-        // `y` shows or hides the translations, exactly like `:translation`.
-        KeyCode::Char('y' | 'Y') => {
-            let on = !app.config.lyric_translation;
-            app.set_lyric_translation(on);
-        }
         _ => {}
     }
     Ok(())
@@ -1036,6 +1031,34 @@ mod tests {
             app.config.playerbar.spinning_cover,
             "`Esc` gave up on the half-typed sequence"
         );
+    }
+
+    /// The translation switch has one trigger path: `y` is the table's key for `translation`,
+    /// so the key and the `:` command run the same handler rather than two copies.
+    #[tokio::test]
+    async fn the_translation_key_and_command_share_one_trigger() {
+        let mut app = app();
+        assert!(app.config.lyric_translation, "the default is on");
+
+        press(&mut app, 'y');
+        assert!(!app.config.lyric_translation, "`y` toggled it off");
+
+        crate::input::ex::execute(
+            &mut app,
+            crate::input::ex::ExCommand::parse("translation on").expect("a command"),
+        )
+        .expect("toggles it back");
+        assert!(app.config.lyric_translation, "the command toggled it on");
+
+        // The settings page reads the same row and runs the same command.
+        let target = crate::ui::settings::SETTINGS
+            .iter()
+            .position(|setting| setting.label == "译文")
+            .expect("the translation row");
+        app.state.settings.select_row(target);
+        crate::ui::settings::change(&mut app, &crate::ui::settings::SETTINGS[target], true)
+            .expect("the row changes it");
+        assert!(!app.config.lyric_translation, "the row toggled it off");
     }
 
     /// `:tasks` opens the list, `Esc` closes it, and the keys while it is up are its own — the

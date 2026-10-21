@@ -626,6 +626,27 @@ mod tests {
         }
     }
 
+    /// Every row is a command the palette can run, not merely text that parses. This is what
+    /// keeps the page derived from the command table: a row whose verb is missing from
+    /// `COMMANDS` is a trigger that the keyboard and palette cannot reach.
+    #[test]
+    fn every_row_names_a_palette_command() {
+        use crate::state::command::COMMANDS;
+
+        for setting in SETTINGS {
+            let name = setting.ex.split_whitespace().next().unwrap_or(setting.ex);
+            let command = COMMANDS
+                .iter()
+                .find(|command| command.name == name)
+                .unwrap_or_else(|| panic!("{}: `{name}` is not in COMMANDS", setting.label));
+            assert!(
+                command.in_palette,
+                "{}: `{name}` is not offered by the palette",
+                setting.label
+            );
+        }
+    }
+
     /// Every row runs the command it claims to: the line parses as a command line, so a renamed
     /// command cannot leave a row that does nothing.
     #[test]

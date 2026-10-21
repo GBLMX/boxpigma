@@ -329,7 +329,7 @@ mod command_panel_tests {
         for (section, expected) in [
             ("通知", vec!["notify song_change", "notify errors"]),
             ("终端", vec!["mouse", "cursor"]),
-            ("歌词", vec!["lyrics", "lyricgradient"]),
+            ("歌词", vec!["lyrics", "lyricgradient", "translation"]),
             ("缓存", vec!["saveonplay"]),
         ] {
             let index = panel

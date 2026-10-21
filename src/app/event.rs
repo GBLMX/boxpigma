@@ -377,7 +377,6 @@ impl App {
     fn handle_command_event(&mut self, event: CommandEvent) {
         match event {
             CommandEvent::Panel(action) => self.handle_command_panel(action),
-            CommandEvent::ToggleBordered => self.state.border.enabled = !self.state.border.enabled,
         }
     }
 

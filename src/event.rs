@@ -159,7 +159,6 @@ pub enum NavigationEvent {
 #[derive(Clone, Debug)]
 pub enum CommandEvent {
     Panel(CommandPanelAction),
-    ToggleBordered,
 }
 
 #[derive(Clone, Debug)]

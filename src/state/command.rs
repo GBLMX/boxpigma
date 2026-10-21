@@ -297,6 +297,18 @@ pub const COMMANDS: &[Command] = &[
         "歌词",
         names_of::<GradientPreset>,
     ),
+    // `y` used to be a hand-written arm in the main key map; the table owns it now, so the
+    // keyboard, the `:` line, the palette and the settings page all reach the same handler.
+    Command {
+        name: "translation",
+        summary: "歌词译文开关",
+        key: Some("y"),
+        ex: "translation",
+        args: on_off,
+        needs_argument: false,
+        in_palette: true,
+        group: Some("歌词"),
+    },
     setting("saveonplay", "saveonplay", "边听边存开关", "缓存", on_off),
 ];
 
