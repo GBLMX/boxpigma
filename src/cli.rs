@@ -511,9 +511,10 @@ fn exit_on_broken_pipe() {
     unsafe { libc::signal(libc::SIGPIPE, libc::SIG_DFL) };
 }
 
-pub async fn run_cli(mut cli: Cli) -> color_eyre::Result<Option<App>> {
+pub async fn run_cli(mut cli: Cli) -> color_eyre::Result<Option<Config>> {
     // A subcommand prints and exits, so it must not inherit the ignored `SIGPIPE` (see
-    // `exit_on_broken_pipe`). The TUI path below is deliberately left as it is.
+    // `exit_on_broken_pipe`). The daemon path below owns this runtime; the interactive
+    // path returns the config and lets `main` hand the terminal to `ferriso-tui`.
     if cli.command.is_some() {
         exit_on_broken_pipe();
     }
@@ -595,7 +596,7 @@ pub async fn run_cli(mut cli: Cli) -> color_eyre::Result<Option<App>> {
         return Ok(None);
     }
 
-    Ok(Some(App::new(config, true)?))
+    Ok(Some(config))
 }
 
 /* -------------------------------------------------------------------------- */

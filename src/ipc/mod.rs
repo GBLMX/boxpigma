@@ -677,7 +677,7 @@ async fn connect() -> color_eyre::Result<ClientStream> {
     let path = resolve_socket_path();
     client_connect(&path)
         .await
-        .wrap_err("boxpigma is not running (start the TUI or `boxpigma -d`, or check --socket)")
+        .wrap_err("boxpigma is not running (start `boxpigma -d` or check --socket)")
 }
 
 /// Send a `status` request and return the live snapshot.

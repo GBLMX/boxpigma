@@ -1,10 +1,11 @@
 //! Shared backend actor, based on the Ferriso architecture.
 //!
-//! The actor owns the domain state and GUI renders only immutable snapshots.
-//! This is the only place that talks to `ApiService` and `PlaybackEngine` for
-//! that session. The TUI still runs its legacy `App`; moving it onto the same
-//! actor means replacing its terminal renderer/input loop, not adding a second
-//! backend state.
+//! The actor owns the domain state; both frontends render only immutable
+//! snapshots. This is the only place that talks to `ApiService` and
+//! `PlaybackEngine` for that session. The interactive TUI mounts this backend
+//! through `ferriso-tui`; the desktop GUI mounts it through `ferriso-gui`. The
+//! headless daemon still owns the legacy `App` because it hosts IPC/MPRIS,
+//! which are not yet bridged into this actor.
 
 mod app;
 mod view;

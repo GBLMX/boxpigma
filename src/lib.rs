@@ -51,6 +51,7 @@ pub mod playback;
 pub mod service;
 pub mod state;
 pub mod text_input;
+pub mod tui;
 pub mod ui;
 pub mod update;
 pub mod utils;

@@ -105,33 +105,34 @@ boxpigma 把网易云音乐与本地音频播放带进终端：流式播放、�
 
 **界面**
 
-- [x] 自定义渲染的导航列表与内容列表、表头自定义、数据分页加载
-- [x] 歌词五种显示样式（窗口 / 一次一行 / KTV 单色填充 / 颜色流动 / 纯列表）+ 渐变逐字高亮 + 严格按解码位置对轴 + 译文标记与翻译开关
-- [x] 重写 playerbar（含封面）· 主题背景完整绘制 · 高亮行对比度自动保证
-- [x] MV 海报面板（歌词页随歌自动加载海报与标题 / 歌手 / 时长 · 发布日期 / 简介；无 MV、取不到、或页面放不下就**整块不画**，页面与之前逐字节一致）· 顶栏圆形头像（登录后显示）· 黑胶旋转（`[playerbar] spinning_cover`，默认关闭）
-- [x] 设置页（`,` / `:settings`）：外观 / 歌词 / 播放条 / 通知 / 缓存 五组开关收进一张表——左侧分组、右侧条目与当前值。每行改动用的是**该设置自己的 `:` 命令**（鼠标捕获、光标形状、`random` 主题这些副作用照旧生效），行的值直接从 `config.toml` 的该键路径读回，行的选项取自命令自己的补全列表（新增预设无需改页面）
-- [x] 频谱可视化（`v`）· 音高读数（`V`，自实现 YIN，无新增依赖）
-- [x] vim 风格 `:` 命令行与 Tab 补全 · command panel（`ctrl+p`）· 鼠标交互与光标形状
-- [x] 重写 splash
+- 导航与内容列表由同一份配置生成；歌曲 / 歌单 / 排行榜 / 歌手 / 热搜 / 分页加载共享一套 actor 快照
+- 内容页表头、选中行与当前播放行；歌手页三栏（热门歌曲 / 专辑 / 相似歌手）
+- 歌词页跟随播放位置并显示译文；队列页可切队列、点歌、清空
+- 播放条带封面（`ratatui-image`，失败时半块字符画）、频谱、音高读数、时长与音量
+- 主题来自 `config.toml` 的 `[theme]` / 内置主题；`:` 命令与设置页可切换并自动保存
+- 设置页把常用开关、主题、音质、音量收进一张表；改动即时生效并写回 `config.toml`
+- `:` 命令行（无 Tab 补全）；固定键位与鼠标点击 / 双击 / 滚轮 / 进度条 seek / 音量区调音量
+- 桌面通知（切歌 / 出错；`notify-send`）
 
 **终端**
 
-- [x] kitty 图形协议封面（可用 `[playerbar] image_protocol` 强制）· 协议以**终端的回答**为准，tmux 内自动回退、herdr 与 tuios 窗格内固定 kitty
-- [x] 同步刷新（整帧一次性呈现）· kitty 键盘协议 · 括号粘贴
-- [x] 桌面通知（切歌 / 出错；kitty 走 `OSC 99`，其余终端 `OSC 9`）
+- 封面通过 `ratatui-image` 协商 kitty / sixel / 半块字符画；tmux 内按终端回答回退
+- 二维码在终端内绘制；窄屏时自动隐藏次要信息
+- 颜色与背景只从主题调色板取值，不在界面代码里硬编码 RGB
+- 交互式 TUI 不再安装旧 `App` 的 kitty 键盘协议与括号粘贴；基础按键在常见终端可用
 
 **集成与打包**
 
-- [x] 命令行控制（`status` / `msg`）+ JSON IPC（waybar 等）· 守护进程模式（`boxpigma -d`）
-- [x] 桌面媒体会话（MPRIS，`org.mpris.MediaPlayer2.boxpigma`）：`playerctl`、KDE / GNOME 媒体控件、键盘与蓝牙耳机媒体键可直接控制播放，属性里带封面 `mpris:artUrl`；TUI 与守护进程都提供
-- [x] 系统包管理器安装（yay / paru）· shell 补全（bash / zsh / fish / elvish / powershell）
+- 命令行控制（`status` / `msg`）+ JSON IPC（waybar 等）· 守护进程模式（`boxpigma -d`）
+- 桌面媒体会话（MPRIS，`org.mpris.MediaPlayer2.boxpigma`）：`playerctl`、KDE / GNOME 媒体控件、键盘与蓝牙耳机媒体键可直接控制播放，属性里带封面 `mpris:artUrl`；当前由守护进程提供（actor TUI 的桥接尚未接入）
+- 系统包管理器安装（yay / paru）· shell 补全（bash / zsh / fish / elvish / powershell）
 
 **开发**
 
 - [x] 单一 Cargo workspace（`cargo test/clippy --workspace` 覆盖全部成员）
 - [x] 随仓库提供的性能基准（`cargo test --release --lib -- --ignored --nocapture`）
 
-**待办**
+**历史能力（旧 TUI；交互式 actor TUI 尚未迁移全部命令）**
 
 - [x] command panel 重写，更多运行时配置支持（`ctrl+p` 面板 + `:mouse` / `:cursor` / `:notify` / `:lyricgradient` / `:saveonplay` 等可运行时修改的设置）
 - [x] 云盘源作为 fallback（NCM → **云盘** → 才报错）
@@ -255,40 +256,58 @@ cargo build --release
 
 ### 快捷键
 
-| 快捷键        |                     描述                     |
-| :------------ | :------------------------------------------: |
-| w             |                 清空播放队列                 |
-| s/d           |       添加到喜欢/不感兴趣(仅每日推荐)        |
-| ?             |                  快捷键面板                  |
-| r             |               手动刷新列表内容               |
-| tab/shift+tab |                 切换导航区块                 |
-| enter         |                播放/进入列表                 |
-| space         |                     暂停                     |
-| f             |                   播放队列                   |
-| l             |                     歌词                     |
-| /             |                  搜索/过滤                   |
-| b             |                   样式切换                   |
-| left /right   |                   seek 15s                   |
-| p /n          |                上一首/下一首                 |
-| ctrl+p        |                command panel                 |
-| L             |               登录网易云                     |
-| c             |  切换表格为cell/row模式(回车进入歌手/专辑)   |
-| m             | 切换播放模式（适用于我的歌单或我喜欢的音乐） |
-| u             |  上传`本地音乐`或`下载管理`的音频到音乐云盘  |
-| g/G           |                列表顶部/底部                 |
-| v             |        频谱显示开关（同 `:visualizer on`）     |
-| V             |          音高读数开关（同 `:pitch on`）        |
-| y             |       歌词翻译开关（同 `:translation on`）     |
-| 任意可换       |       键位由命令表派生，`[keys]` 里 `命令名 = "键"` 即重绑；值可写多键序列（`"z z"`、`"ctrl+l"`，`Esc` 放弃半截），`""` 解绑     |
-| ,             |       设置页（同 `:settings`）：↑↓ 选择 · ←→ 修改 · 空格 开关     |
-| `ctrl+↑/↓/←/→` |  拖面板边界：顶栏/播放条、侧栏尺寸（同鼠标拖拽）  |
-| tab / shift+tab（歌手页） | 在热门曲目 / 专辑 / 相似歌手之间切换光标；`Enter` 按当前栏生效（歌曲播放、专辑打开、相似歌手跳转） |
-| :             |      命令模式（vim 风格，Tab 补全，见下节）     |
+| 快捷键 | 描述 |
+| :--- | :--- |
+| `?` | 快捷键面板 |
+| `q` / `Ctrl+C` | 退出 |
+| `tab` / `shift+tab` | 在导航 / 内容 / 搜索之间切换焦点 |
+| `↑` `↓` / `j` `k` | 移动选择；`Home` / `End` 到首尾 |
+| `enter` | 播放歌曲、打开歌单/专辑/歌手，或执行设置项 |
+| `space` | 播放 / 暂停 |
+| `n` / `p` | 下一首 / 上一首 |
+| `m` / `S` | 切换播放模式 / 收藏当前歌曲 |
+| `a` / `s` | 当前行加入下一首 / 收藏当前行 |
+| `A` / `b` | 从当前歌曲行打开歌手 / 专辑 |
+| `o` | 加载更多（分页列表） |
+| `c` / `C` | 包含当前歌曲的歌单 / 相似歌曲 |
+| `f` / `l` / `,` / `L` / `g` | 播放队列 / 歌词 / 设置 / 登录 / 浏览 |
+| `/` | 搜索；`tab` 切换单曲 / 歌单 / 歌手 / 专辑，`enter` 提交 |
+| `:` | 命令模式（见下节） |
+| `[` / `]` | 后退 / 前进 5 秒；播放队列页切换队列 |
+| `-` / `=` | 音量减 / 加 |
+| `ctrl+←` / `ctrl+→` | seek 后退 / 前进 |
+| `ctrl+↑` / `ctrl+↓` | 音量加 / 减 |
+| `r` | 刷新当前列表 |
+| `v` / `V` / `y` / `w` | 频谱 / 音高 / 歌词译文 / 清空队列 |
+| 鼠标 | 点击导航与列表；双击播放；滚轮移动选择；点击进度条 seek、点击音量区调音量 |
+
+交互式 TUI 的键位固定；`config.toml` 的 `[keys]` 目前只由 `boxpigma -d` 的守护进程使用。
+
+### 终端界面（actor TUI）
+
+交互式 `boxpigma` 与 `boxpigma-gui` 共用 `boxpigma::backend`：一个 actor 独占
+`ApiService`、`PlaybackEngine`、缓存、登录和导航状态；终端只发语义消息、收不可变快照。
+Tokio runtime、actor 启停和终端生命周期由 `ferriso-tui` 管理，GUI 由 `ferriso-gui`
+管理。依赖固定到 Ferriso `e021c99`（MIT）。
+
+```text
+终端 ──Message──▶ backend actor ──Arc<View> 快照──▶ ratatui 终端
+                        ├─ ApiService / 缓存
+                        └─ PlaybackEngine（队列 + 音频）
+```
+
+- 导航按 `config.toml` 的 `[navigation]` 生成；内容页支持歌曲、歌单、排行榜、歌手、热搜和分页加载
+- 歌手页分热门歌曲 / 专辑 / 相似歌手三栏（`1` `2` `3` 切换）；歌曲行支持播放、收藏、下一首、打开歌手/专辑
+- 队列页可切队列、点歌、清空；歌词页跟随播放位置，支持译文；登录页有二维码、密码、短信和签到
+- 封面走 `ratatui-image`（查询失败时回落半块字符画）；二维码在终端内绘制；切歌/错误提示在顶栏显示数秒
+- 鼠标命中区随帧重建，点击导航、列表、播放按钮、进度条和音量区
+- **范围说明**：`boxpigma -d` 的守护进程仍使用旧 `App` 启动 IPC / MPRIS；交互式 actor TUI
+  暂未提供 Unix socket 控制接口
 
 ### 桌面界面（`boxpigma-gui`）
 
 GUI 的后端已经按 Ferriso 的 actor 模型抽成 `boxpigma::backend`，并直接依赖其
-`ferriso-core` 与 `ferriso-gui`（MIT，Git 依赖，上游 2799496）：一个任务独占
+`ferriso-core` 与 `ferriso-gui`（MIT，Git 依赖，上游 e021c99）：一个任务独占
 `ApiService`、`PlaybackEngine`、缓存、登录和导航状态，窗口只发语义消息、收只读快照；
 Tokio runtime、actor 启停和 iced 窗口生命周期都由 Ferriso 的 adapter 管理。
 
@@ -311,52 +330,40 @@ cargo build --release --bin boxpigma-gui
 - 底部播放条：封面、上一首/播放/下一首、播放模式、喜欢、进度（拖动后松手 seek）、音量、实时频谱；切歌/出错按 `[notify]` 走 `notify-send`
 - 快捷键：`Ctrl+空格` 播放/暂停，`Ctrl+←/→` 上一首/下一首，`Ctrl+L` 喜欢，`Ctrl+M` 切模式，`Ctrl+Y` 译文，`Ctrl+V` 频谱，`Ctrl+P` 音高，`Esc` 返回
 - 需要 Wayland 或 X11；渲染走 `wgpu`（优先 Vulkan，失败时回落 GL），也可用软件渲染
-- TUI 仍保留原有 `App` 与终端渲染；它和 GUI 共用同一份配置、cookie 与缓存文件（不是同一个 `ApiService` 实例），终端 UI 没有为了 actor 重写。Ferriso 的 `ferriso-tui` 已经具备 ratatui adapter，但迁移 pigma 的完整终端界面是后续工作。`:` 命令模式、IPC、MPRIS、终端图形协议仍属于 TUI/守护进程
+- TUI 与 GUI 共用同一份配置、cookie 与缓存文件；两者各自启动 actor，但模型、消息和快照类型相同
 
 ### 命令模式（vim 风格）
 
-按 `:` 打开命令行：`Enter` 执行、`Esc` 取消、`Tab` 补全（命令名、`:theme` 的主题名、`on`/`off`）。
-结果与错误都以 toast 回报，跟 vim 一样（例如 `E: 未知命令: foo`）。
+按 `:` 打开命令行：`Enter` 执行、`Esc` 取消。命令在 actor 上以语义消息执行；
+`theme` / `quality` / `volume` / `seek` 的值直接写进同一条命令行。
 
 | 命令 | 说明 |
 |---|---|
-| `:q` / `:quit` | 退出 |
-| `:help` / `:login` | 快捷键面板 / 登录页 |
-| `:save` | 立即写回 `config.toml` |
-| `:theme <名字>` | 切换主题（`Tab` 会列出全部主题名） |
-| `:volume 75` / `:volume +5` / `:volume -10` | 音量（与 `boxpigma msg volume` 同一套语法） |
+| `:q` / `:quit` / `:exit` | 退出 |
+| `:help` | 快捷键面板 |
+| `:login` / `:logout` / `:sign` | 登录页 / 退出登录 / 每日签到 |
+| `:browse` / `:main` | 回到浏览页 |
+| `:queue` / `:lyrics` / `:settings` | 打开播放队列 / 歌词 / 设置 |
+| `:theme [名字]` | 不带参数循环主题；带名字切到指定主题 |
+| `:quality [等级]` | 不带参数循环音质；带等级切到 `standard` / `higher` / `exhigh` / `lossless` 等 |
+| `:volume 75` | 绝对音量（0-100） |
 | `:seek 90` / `:seek +15` / `:seek -30` / `:seek 50%` | 跳到某秒 / 相对跳转 / 百分比 |
-| `:clear` | 清空当前播放队列（与 `boxpigma msg clear` 同一动作） |
-| `:visualizer on\|off` | 频谱显示开关（同 `v` 键） |
-| `:signin <账号> <密码>` | 邮箱或手机号 + 密码登录（`:login` 仍是二维码页） |
-| `:sms <手机号>` | 发送短信验证码 |
-| `:smslogin <手机号> <验证码>` | 短信验证码登录 |
-| `:logout` | 退出登录（清服务端会话与本地 cookie） |
-| `:sign` | 网易云每日签到（云贝） |
-| `:layout default\|modern\|minimal` | 播放条布局（`modern` 下频谱只有封面列的 8 格宽，另两种布局是整行） |
-| `:pitch on\|off` | 音高读数开关（同 `V` 键） |
-| `:spin on\|off` | 播放条封面旋转开关（同 `t` 键；默认关闭，暂停即停在当前角度） |
-| `:translation on\|off` | 歌词翻译开关（同 `y` 键；关掉后只剩原文） |
-| `:settings` | 设置页：全部开关一张表（同 `,` 键；外观 / 歌词 / 播放条 / 通知 / 缓存） |
-| `:progress thick\|segment\|line\|blocks\|plain` | 进度条样式（`Tab` 列出五种；裸调用轮流切换，如 `segment` 是斜线 + 彩虹渐变） |
-| `:pane <面板> [on\|off\|toggle]` | 显示/隐藏面板（`topbar` / `navigation` / `playerbar` / `mv`；`Tab` 补全；裸为 toggle） |
-| `:lyrics window\|one_line\|ktv\|flow\|plain` | 歌词显示样式（`Tab` 会列出五种与各自说明） |
-| `:notify song_change\|errors on\|off` | 切歌提示 / 播放错误提示开关 |
-| `:mouse on\|off` | 鼠标捕获开关（影响滚轮与双击；当场写终端转义序列） |
-| `:cursor default\|block\|underline\|bar` | 终端光标形状（当场生效） |
-| `:lyricgradient <预设>` | 歌词扫光渐变（`Tab` 列出全部预设） |
-| `:saveonplay on\|off` | 播放时自动写入「我喜欢的音乐」 |
-| `:simi`（`:similar`） | 打开当前播放歌曲的相似歌曲（内容页，`Esc` 回到发起的页面） |
-| `:simiplaylist`（`:songlists`） | 打开包含当前歌曲的歌单 |
-| `:fm` | 取一页私人 FM 并播放 |
-| `:fmtrash`（`:fm-trash`） | 把当前 FM 歌曲从私人 FM 里剔除 |
-
-终端背景为浅色时，`:theme` 配合配置里的 `background = "auto"` 与 `light_theme` 会自动选浅色主题。
+| `:clear` | 清空当前播放队列 |
+| `:play` / `:pause` | 播放 / 暂停（切换） |
+| `:next` / `:prev` | 下一首 / 上一首 |
+| `:like` | 收藏当前歌曲 |
+| `:refresh` | 刷新当前列表 |
+| `:translation on\|off` | 歌词译文开关 |
+| `:visualizer on\|off` | 频谱开关 |
+| `:pitch on\|off` | 音高读数开关 |
+| `:notify song` / `:notify errors` | 切歌 / 错误通知开关 |
+| `:search [关键词]` | 不带关键词进入搜索框；带关键词直接搜索 |
+| `:save` | 配置在每次更改时已自动保存，这条只回报状态 |
 
 ### CLI 控制（status / msg）
 
-查询/控制一个**正在运行**的 boxpigma 实例（交互界面或守护进程均可），
-通过 `~/.cache/boxpigma/boxpigma.sock` 上的 Unix socket 通信：
+查询/控制一个**正在运行**的 boxpigma 守护进程（`boxpigma -d`），
+通过 `~/.cache/boxpigma/boxpigma.sock` 上的 Unix socket 通信（actor TUI 的 socket 桥接尚未接入）：
 
 ```bash
 # 生成 shell 补全脚本（bash / zsh / fish / elvish / powershell）

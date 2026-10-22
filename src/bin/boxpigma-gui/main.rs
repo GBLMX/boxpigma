@@ -23,6 +23,7 @@ fn main() -> iced::Result {
         ferriso_gui::Settings {
             title: "boxpigma".into(),
             size: (1180.0, 780.0),
+            application_id: "io.github.gblmx.boxpigma".into(),
         },
     )
 }

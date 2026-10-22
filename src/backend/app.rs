@@ -66,10 +66,14 @@ pub enum Message {
     CycleMode,
     ToggleLike,
     SearchInput(String),
+    Search(String),
     SetSearchKind(SearchKind),
     SearchSubmit,
     SetLoginMethod(LoginMethod),
     SetLoginField(LoginField, String),
+    AppendLoginField(LoginField, char),
+    BackspaceLoginField(LoginField),
+    ClearLoginField(LoginField),
     SendSmsCode,
     SubmitLogin,
     StartQr,
@@ -84,6 +88,8 @@ pub enum Message {
     ToggleVisualizer,
     TogglePitch,
     CycleTheme,
+    SetTheme(String),
+    SetQuality(String),
     Internal(Internal),
 }
 
@@ -1503,6 +1509,11 @@ impl App for Backend {
                 self.search.active = true;
                 Command::none()
             }
+            Message::Search(query) => {
+                self.search.query = query;
+                self.search.active = true;
+                self.submit_search()
+            }
             Message::SetSearchKind(kind) => {
                 self.search.kind = kind;
                 if !self.search.query.trim().is_empty() {
@@ -1523,12 +1534,19 @@ impl App for Backend {
                 }
             }
             Message::SetLoginField(field, value) => {
-                match field {
-                    LoginField::Account => self.login_account = value,
-                    LoginField::Password => self.login_password = value,
-                    LoginField::Phone => self.login_phone = value,
-                    LoginField::Code => self.login_code = value,
-                }
+                *self.login_field_mut(field) = value;
+                Command::none()
+            }
+            Message::AppendLoginField(field, ch) => {
+                self.login_field_mut(field).push(ch);
+                Command::none()
+            }
+            Message::BackspaceLoginField(field) => {
+                self.login_field_mut(field).pop();
+                Command::none()
+            }
+            Message::ClearLoginField(field) => {
+                self.login_field_mut(field).clear();
                 Command::none()
             }
             Message::SendSmsCode => self.send_sms_code(),
@@ -1595,6 +1613,39 @@ impl App for Backend {
                     let next = names[(current + 1) % names.len()].to_string();
                     self.config.default_theme = next;
                     self.config.save();
+                }
+                Command::none()
+            }
+            Message::SetTheme(name) => {
+                if self
+                    .theme_registry
+                    .choosable_names()
+                    .iter()
+                    .any(|theme| *theme == name)
+                {
+                    self.config.default_theme = name;
+                    self.config.save();
+                } else {
+                    self.banner = Banner {
+                        text: format!("未知主题：{name}"),
+                        error: true,
+                    };
+                }
+                Command::none()
+            }
+            Message::SetQuality(level) => {
+                match ncm_api::SongQuality::from_level(&level) {
+                    Some(quality) => {
+                        self.config.cache.quality = level;
+                        self.engine.set_quality(quality);
+                        self.config.save();
+                    }
+                    None => {
+                        self.banner = Banner {
+                            text: format!("未知音质：{level}"),
+                            error: true,
+                        };
+                    }
                 }
                 Command::none()
             }
@@ -1719,6 +1770,15 @@ impl App for Backend {
 }
 
 impl Backend {
+    fn login_field_mut(&mut self, field: LoginField) -> &mut String {
+        match field {
+            LoginField::Account => &mut self.login_account,
+            LoginField::Password => &mut self.login_password,
+            LoginField::Phone => &mut self.login_phone,
+            LoginField::Code => &mut self.login_code,
+        }
+    }
+
     fn handle_internal(&mut self, internal: Internal) -> Command<Message> {
         match internal {
             Internal::UserLoaded(user) => {
