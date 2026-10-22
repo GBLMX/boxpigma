@@ -11,8 +11,7 @@ mod theme;
 
 use std::time::{Duration, Instant};
 
-use ferriso_tui::ratatui::layout::Rect;
-use ferriso_tui::{Outcome, Renderer, crossterm::event::Event};
+use ferriso_tui::{Outcome, Renderer, crossterm::event::Event, ratatui::layout::Rect};
 use qrcode::{QrCode, render::unicode::Dense1x2};
 use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
 

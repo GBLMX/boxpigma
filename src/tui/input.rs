@@ -3,11 +3,14 @@
 //! Every branch returns either a semantic backend message, a local overlay
 //! change, or `Quit`. It never mutates the backend directly.
 
-use ferriso_tui::Outcome;
-use ferriso_tui::crossterm::event::{
-    Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+use ferriso_tui::{
+    Outcome,
+    crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton, MouseEvent,
+        MouseEventKind,
+    },
+    ratatui::layout::Rect,
 };
-use ferriso_tui::ratatui::layout::Rect;
 
 use crate::{
     backend::{self, CoreMessage, Page, SearchKind, View},
