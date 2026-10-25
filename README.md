@@ -211,8 +211,12 @@ curl -fsSL https://raw.githubusercontent.com/GBLMX/pigma/main/install.sh | sh
 `-beta`/`-alpha` 后缀的清单；镜像不可达时回退到 GitHub 最新 release 的
 `boxpigma-updates.json`。清单内 `platforms.linux-x86_64` / `linux-aarch64` 的
 `url`、`install_urls`、`sha256` 是安装依据；旧 release 没有清单时仍回退到原来的 latest tag。
-`--version v1.5.0` 这种固定版本仍直接走 tag 资产，不受 channel 影响。镜像主机上需要分别发布
-`boxpigma-updates.json` / `-beta.json` / `-alpha.json`；未发布时客户端自动走 GitHub fallback。
+`--version v1.5.0` 这种固定版本仍直接走 tag 资产，不受 channel 影响。release workflow 会把每个
+版本 stage 成 `boxpigma-v<版本>/`，在配置了 `BOXPIGMA_DEPLOY_KEY` / `BOXPIGMA_DEPLOY_HOST`（或复用
+`FERRISO_DEPLOY_KEY` / `FERRISO_DEPLOY_HOST`）时发到 Aliyun 的 `/var/www/ferriso-updates`；服务器上的
+`boxpigma-update-sync` 从当前 release 目录选出
+stable/beta/alpha 最新版，写入 `boxpigma-updates.json` / `-beta.json` / `-alpha.json`。镜像未部署时
+客户端自动走 GitHub fallback。
 
 ```sh
 boxpigma update                    # 装最新版，保留最近 3 个版本（current 指向的那个永不删）

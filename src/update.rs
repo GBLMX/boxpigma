@@ -21,6 +21,7 @@ use semver::Version;
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
+use url::Url;
 
 use crate::config::UpdateChannel;
 
@@ -274,21 +275,22 @@ async fn fetch_release(client: &Client, opts: &Options) -> Result<ReleaseInfo> {
     };
 
     release_from_manifest(manifest, &platform_key())
-        .ok_or_else(|| eyre!("更新清单里没有 {} 的产物", platform_key()))
 }
 
-fn release_from_manifest(manifest: Manifest, key: &str) -> Option<ReleaseInfo> {
-    let platform = manifest.platforms.get(key)?;
-    if platform.url.trim().is_empty() {
-        return None;
-    }
+fn release_from_manifest(manifest: Manifest, key: &str) -> Result<ReleaseInfo> {
+    let version = normalized_version(&manifest.version)?;
+    let platform = manifest
+        .platforms
+        .get(key)
+        .ok_or_else(|| eyre!("更新清单里没有 {key} 的产物"))?;
+    asset_from_url(&platform.url)?;
     let install_url = platform
         .install_urls
         .first()
         .cloned()
         .unwrap_or_else(|| platform.url.clone());
-    Some(ReleaseInfo {
-        version: manifest.version,
+    Ok(ReleaseInfo {
+        version,
         notes: manifest.notes,
         published: manifest.pub_date,
         asset_url: platform.url.clone(),
@@ -296,6 +298,32 @@ fn release_from_manifest(manifest: Manifest, key: &str) -> Option<ReleaseInfo> {
         signature: platform.signature.clone(),
         sha256: platform.sha256.clone(),
     })
+}
+
+fn normalized_version(raw: &str) -> Result<String> {
+    let raw = raw.trim();
+    let raw = raw.strip_prefix('v').unwrap_or(raw);
+    let version =
+        Version::parse(raw).map_err(|error| eyre!("更新清单里的版本 `{raw}` 不合法：{error}"))?;
+    Ok(version.to_string())
+}
+
+/// Take only the final path segment of an asset URL, and reject anything that could
+/// become a path component outside the install directory.
+fn asset_from_url(url: &str) -> Result<String> {
+    let parsed = Url::parse(url).map_err(|error| eyre!("资产 URL `{url}` 不合法：{error}"))?;
+    let name = parsed
+        .path_segments()
+        .and_then(|mut segments| segments.next_back())
+        .filter(|name| {
+            !name.is_empty()
+                && *name != "."
+                && *name != ".."
+                && !name.contains('/')
+                && !name.contains('\\')
+        })
+        .ok_or_else(|| eyre!("资产 URL `{url}` 没有安全的文件名"))?;
+    Ok(name.to_string())
 }
 
 fn is_newer(candidate: &str, current: &str) -> bool {
@@ -306,10 +334,6 @@ fn is_newer(candidate: &str, current: &str) -> bool {
         return false;
     };
     candidate > current
-}
-
-fn asset_from_url(url: &str) -> String {
-    url.rsplit('/').next().unwrap_or_default().to_string()
 }
 
 fn checksums_url(asset_url: &str) -> String {
@@ -325,11 +349,9 @@ fn explicit_version(version: &str) -> Result<Option<String>> {
     if version == "latest" {
         return Ok(None);
     }
-    let number = version.trim_start_matches('v');
-    if !number.starts_with(|c: char| c.is_ascii_digit()) {
-        bail!("版本号看着不对：{version}（期望形如 v1.4.0 或 1.4.0）");
-    }
-    Ok(Some(number.to_string()))
+    normalized_version(version)
+        .map(Some)
+        .map_err(|error| eyre!("版本号看着不对：{version}（{error}）"))
 }
 
 /// `1.6.0-x86_64-unknown-linux-gnu` → `1.6.0`, the script's `${MATCH%-$TARGET}`.
@@ -478,7 +500,7 @@ async fn resolve_release(client: &Client, opts: &Options) -> Result<ReleaseSpec>
     if opts.version == "latest" {
         match fetch_release(client, opts).await {
             Ok(release) => {
-                let asset = asset_from_url(&release.asset_url);
+                let asset = asset_from_url(&release.asset_url)?;
                 let checksums_source = match opts.checksums.as_deref() {
                     Some(source) if !source.is_empty() => source.to_string(),
                     _ => checksums_url(&release.asset_url),
@@ -1243,7 +1265,39 @@ mod tests {
             checksums_url(&release.asset_url),
             "https://updates.example/SHA256SUMS"
         );
-        assert_eq!(asset_from_url(&release.asset_url), asset_name());
+        assert_eq!(
+            asset_from_url(&release.asset_url).expect("safe asset"),
+            asset_name()
+        );
+    }
+
+    #[test]
+    fn normalized_versions_and_assets_cannot_escape_the_install_root() {
+        assert_eq!(normalized_version("v1.8.0").expect("version"), "1.8.0");
+        assert!(normalized_version("../../evil").is_err());
+        assert!(normalized_version("1.8.0/../../evil").is_err());
+
+        assert_eq!(
+            asset_from_url("https://updates.example/boxpigma.tar.gz").expect("asset"),
+            "boxpigma.tar.gz"
+        );
+        assert!(asset_from_url("https://updates.example/").is_err());
+        assert!(asset_from_url("not a URL").is_err());
+
+        let key = platform_key();
+        for (version, url) in [
+            ("../../evil", "https://updates.example/boxpigma.tar.gz"),
+            ("1.8.0", "https://updates.example/"),
+        ] {
+            let manifest: Manifest = serde_json::from_str(&format!(
+                r#"{{"version":"{version}","platforms":{{"{key}":{{"url":"{url}"}}}}}}"#
+            ))
+            .expect("parse manifest");
+            assert!(
+                release_from_manifest(manifest, &key).is_err(),
+                "unsafe manifest must be rejected"
+            );
+        }
     }
 
     #[test]

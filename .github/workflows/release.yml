@@ -173,6 +173,36 @@ jobs:
           print(json.dumps(manifest, indent=2))
           PY
 
+      - name: Stage update mirror
+        env:
+          BOXPIGMA_UPDATE_ROOT: ${{ runner.temp }}/boxpigma-mirror
+        run: |
+          python3 packaging/stage-release.py \
+            --dist artifacts \
+            --output "$BOXPIGMA_UPDATE_ROOT" \
+            --tag "$GITHUB_REF_NAME"
+
+      - name: Deploy channel mirror
+        env:
+          BOXPIGMA_DEPLOY_KEY: ${{ secrets.BOXPIGMA_DEPLOY_KEY }}
+          BOXPIGMA_DEPLOY_HOST: ${{ secrets.BOXPIGMA_DEPLOY_HOST }}
+          FERRISO_DEPLOY_KEY: ${{ secrets.FERRISO_DEPLOY_KEY }}
+          FERRISO_DEPLOY_HOST: ${{ secrets.FERRISO_DEPLOY_HOST }}
+        run: |
+          set -o pipefail
+          deploy_key="${BOXPIGMA_DEPLOY_KEY:-$FERRISO_DEPLOY_KEY}"
+          deploy_host="${BOXPIGMA_DEPLOY_HOST:-$FERRISO_DEPLOY_HOST}"
+          if [[ -z "$deploy_key" || -z "$deploy_host" ]]; then
+            echo "deployment secrets are not configured; GitHub fallback remains active"
+            exit 0
+          fi
+          install -d -m 700 ~/.ssh
+          printf '%s\n' "$deploy_key" > ~/.ssh/ferriso-deploy
+          chmod 600 ~/.ssh/ferriso-deploy
+          ssh-keyscan -H "$deploy_host" >> ~/.ssh/known_hosts
+          (cd "$RUNNER_TEMP/boxpigma-mirror" && tar -czf - *) \
+            | ssh -i ~/.ssh/ferriso-deploy "ferriso-deploy@$deploy_host"
+
       - name: Upload release
         uses: softprops/action-gh-release@v3
         with:

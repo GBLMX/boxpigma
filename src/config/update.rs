@@ -59,7 +59,7 @@ impl FromStr for UpdateChannel {
 }
 
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
-#[serde(default, deny_unknown_fields)]
+#[serde(default)]
 pub struct UpdateConfig {
     pub channel: UpdateChannel,
 }
@@ -87,5 +87,13 @@ mod tests {
     fn a_config_without_update_uses_stable() {
         let config: UpdateConfig = toml_edit::de::from_str("").expect("empty config");
         assert_eq!(config.channel, UpdateChannel::Stable);
+    }
+
+    #[test]
+    fn unknown_update_fields_from_a_newer_build_are_ignored() {
+        let config: UpdateConfig =
+            toml_edit::de::from_str("channel = \"beta\"\nfuture_key = true\n")
+                .expect("newer config must load");
+        assert_eq!(config.channel, UpdateChannel::Beta);
     }
 }

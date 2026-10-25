@@ -2,7 +2,7 @@
 
 ### 🚀 Features
 
-- *(update)* **更新通道与原生清单对齐 Ferriso Launcher**：`boxpigma update` 的 `latest` 不再只靠 GitHub latest 跳转，而是读取 `boxpigma-updates.json`（stable/beta/alpha；镜像 `https://updates.bionickernel.com`，GitHub 最新 release 兜底）。清单提供版本说明、发布时间、平台资产和 SHA-256；`[update] channel`、`BOXPIGMA_UPDATE_CHANNEL`、`--channel` 三级覆盖，`BOXPIGMA_UPDATE_URL` / `--manifest` 可指定完整清单。固定 `--version` 仍走 tag 资产。
+- *(update)* **更新通道与原生清单对齐 Ferriso Launcher**：`boxpigma update` 的 `latest` 不再只靠 GitHub latest 跳转，而是读取 `boxpigma-updates.json`（stable/beta/alpha；镜像 `https://updates.bionickernel.com`，GitHub 最新 release 兜底）。清单提供版本说明、发布时间、平台资产和 SHA-256；`[update] channel`、`BOXPIGMA_UPDATE_CHANNEL`、`--channel` 三级覆盖，`BOXPIGMA_UPDATE_URL` / `--manifest` 可指定完整清单。固定 `--version` 仍走 tag 资产。release workflow 同时 stage 版本目录、部署到 Aliyun 镜像，并由 `boxpigma-update-sync` 生成三个通道 feed。
 - *(framework)* **Ferriso 0.1.0 → 0.3.1**：`ferriso-core` / `ferriso-gui` / `ferriso-tui` 从 `e021c99` 升级到 `55d17458`。后端计时器迁移到 `Subscription::interval` + `Internal::Tick`，不再使用已弃用的 `tick_interval` / `tick` 兼容钩子；GUI 的 `Settings` 补上 `exit_on_close_request`。同时获得 0.3.1 的 keyed-command 批次去重修复（同批次同 key 只启动最后一条）。
 - *(tui)* **交互式终端迁到共享 actor 后端**：`boxpigma` 不再启动旧的 `App` 渲染循环，而是与 `boxpigma-gui` 共用 `boxpigma::backend`，由 `ferriso-tui` 管理 Tokio runtime、actor、终端与鼠标捕获。终端持有的是 `Arc<View>` 快照，键盘/鼠标只产生语义 `Message`；导航、歌曲/歌单/排行榜/歌手/热搜、分页加载、歌手三栏、队列、歌词、QR/密码/短信登录、签到、设置、命令模式、封面/二维码、点击 seek/音量与瞬时提示都走同一条消息路径。迁移时固定到 `e021c99`（`ferriso-core` / `ferriso-gui` / `ferriso-tui`）。后端补了 `SetTheme` / `SetQuality` / `Search` / 登录字段追加与退格消息，避免快速输入时用旧快照覆盖整…
 - `boxpigma -d` 的守护进程仍保留旧 `App`，因此 IPC socket 与 MPRIS 目前只在守护进程可用；交互式 actor TUI 的 socket/MPRIS 桥接尚未接入。
