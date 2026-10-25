@@ -336,3 +336,12 @@ log_level = "debug"
 # [[navigation.sections.items]]
 # name = "Liked"
 # api = "user_playlist_like"
+
+# =============================================================================
+# 更新通道
+# =============================================================================
+# stable：只接收正式版；beta：正式版 + beta；alpha：全部。
+# 也可以用 `boxpigma update --channel <stable|beta|alpha>` 或环境变量
+# BOXPIGMA_UPDATE_CHANNEL 临时覆盖。
+[update]
+channel = "stable"

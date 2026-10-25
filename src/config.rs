@@ -14,6 +14,7 @@ mod playerbar;
 mod symbols;
 pub mod theme;
 mod titles;
+mod update;
 
 use std::{collections::HashMap, fs, path::Path};
 
@@ -30,6 +31,7 @@ use serde::{Deserialize, Serialize};
 pub use symbols::*;
 pub use theme::{ColorSpec, RANDOM_THEME, Theme, ThemeRegistry, UserTheme, theme_fallback};
 pub use titles::*;
+pub use update::*;
 
 use crate::{
     logger::Logger,
@@ -140,6 +142,9 @@ pub struct Config {
     /// Desktop notifications, off by default.
     #[serde(default)]
     pub notify: NotifyConfig,
+    /// Update feed: `[update] channel = "stable" | "beta" | "alpha"`.
+    #[serde(default)]
+    pub update: UpdateConfig,
     /// Proxy address for every network request — the NetEase Cloud API, cover
     /// downloads and audio streams. Absent means a direct connection.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -236,6 +241,7 @@ impl Default for Config {
             mouse: true,
             cursor_style: crate::utils::terminal::CursorStyle::default(),
             notify: NotifyConfig::default(),
+            update: UpdateConfig::default(),
             proxy: None,
             search_limit: default_search_limit(),
             navigation_position: NavPosition::default(),

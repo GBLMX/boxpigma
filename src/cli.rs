@@ -11,7 +11,7 @@ use clap::{
 use crate::{
     app::App,
     cli,
-    config::Config,
+    config::{Config, UpdateChannel},
     ipc::{self, ActionKind, ControlAction, MsgAction, QueryAction, StatusSnapshot},
     logger::init_logger,
     playback::parse_seek,
@@ -122,6 +122,12 @@ pub enum Command {
         /// Release tag to install (`v1.6.0` or `1.6.0`); default `latest`.
         #[arg(long, value_name = "TAG", default_value = "latest", value_hint = ValueHint::Other)]
         version: String,
+        /// Release channel for `latest`: stable, beta, or alpha.
+        #[arg(long, value_name = "CHANNEL", value_parser = ["stable", "beta", "alpha"], value_hint = ValueHint::Other)]
+        channel: Option<String>,
+        /// Full update-manifest URL (overrides the channel feed and BOXPIGMA_UPDATE_URL).
+        #[arg(long, value_name = "URL", value_hint = ValueHint::Url)]
+        manifest: Option<String>,
         /// Install root: the directory holding `releases/` and `current`.
         #[arg(long, value_name = "DIR", value_hint = ValueHint::AnyPath)]
         dir: Option<PathBuf>,
@@ -552,6 +558,8 @@ pub async fn run_cli(mut cli: Cli) -> color_eyre::Result<Option<Config>> {
         Some(Command::Update {
             check,
             version,
+            channel,
+            manifest,
             dir,
             mirror,
             checksums,
@@ -560,6 +568,18 @@ pub async fn run_cli(mut cli: Cli) -> color_eyre::Result<Option<Config>> {
             dry_run,
             rollback,
         }) => {
+            let config = Config::load();
+            let channel = match channel {
+                Some(value) => value
+                    .parse::<UpdateChannel>()
+                    .map_err(|error| color_eyre::eyre::eyre!(error))?,
+                None => std::env::var("BOXPIGMA_UPDATE_CHANNEL")
+                    .ok()
+                    .map(|value| value.parse::<UpdateChannel>())
+                    .transpose()
+                    .map_err(|error| color_eyre::eyre::eyre!(error))?
+                    .unwrap_or(config.update.channel),
+            };
             update::run(update::Options {
                 check: *check,
                 version: version.clone(),
@@ -570,6 +590,8 @@ pub async fn run_cli(mut cli: Cli) -> color_eyre::Result<Option<Config>> {
                 insecure: *insecure,
                 dry_run: *dry_run,
                 rollback: *rollback,
+                channel,
+                manifest: manifest.clone(),
             })
             .await?;
             return Ok(None);

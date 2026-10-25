@@ -192,8 +192,10 @@ curl -fsSL https://raw.githubusercontent.com/GBLMX/pigma/main/install.sh | sh
 | 参数 | 环境变量 | 默认 |
 | :--- | :--- | :--- |
 | `--version <tag\|latest>` | `BOXPIGMA_VERSION` | `latest` |
+| `--channel <stable\|beta\|alpha>` | `BOXPIGMA_UPDATE_CHANNEL` | `[update] channel`，再默认 `stable` |
+| `--manifest <url>` | `BOXPIGMA_UPDATE_URL` | 按 channel 的公共清单 |
 | `--dir <path>` | `BOXPIGMA_INSTALL_DIR` | `~/.local/bin` |
-| `--checksums <url\|file>` | `BOXPIGMA_CHECKSUMS` | 资产旁边的 `SHA256SUMS` |
+| `--checksums <url\|file>` | `BOXPIGMA_CHECKSUMS` | 清单内 `sha256`，否则资产旁边的 `SHA256SUMS` |
 | `--host <url>` | `BOXPIGMA_GITHUB` | `https://github.com`（镜像/代理用） |
 | `--rollback` | — | — （切回上一个版本；配 `--dry-run` 只看计划） |
 | `--dry-run` / `--force` | — | — |
@@ -202,19 +204,29 @@ curl -fsSL https://raw.githubusercontent.com/GBLMX/pigma/main/install.sh | sh
 
 ### 升级：`boxpigma update`
 
-装过一次之后就不必再跑脚本：`boxpigma update` 把上面那套流程在进程内重做一遍——下载对应资产、按 `SHA256SUMS` 校验、解压进新的 `releases/<版本>-<目标>`，校验通过才切 `current`，切换失败就退回旧链接。需要 shell、curl、tar 的那部分它自己实现了。
+装过一次之后就不必再跑脚本：`boxpigma update` 把上面那套流程在进程内重做一遍——下载对应资产、按校验和验证、解压进新的 `releases/<版本>-<目标>`，校验通过才切 `current`，切换失败就退回旧链接。需要 shell、curl、tar 的那部分它自己实现了。
+
+`latest` 的版本、说明、发布时间和平台资产来自与 Ferriso Launcher 同形的原生清单：Stable 读
+`https://updates.bionickernel.com/boxpigma-updates.json`，Beta/Alpha 分别读带
+`-beta`/`-alpha` 后缀的清单；镜像不可达时回退到 GitHub 最新 release 的
+`boxpigma-updates.json`。清单内 `platforms.linux-x86_64` / `linux-aarch64` 的
+`url`、`install_urls`、`sha256` 是安装依据；旧 release 没有清单时仍回退到原来的 latest tag。
+`--version v1.5.0` 这种固定版本仍直接走 tag 资产，不受 channel 影响。镜像主机上需要分别发布
+`boxpigma-updates.json` / `-beta.json` / `-alpha.json`；未发布时客户端自动走 GitHub fallback。
 
 ```sh
 boxpigma update                    # 装最新版，保留最近 3 个版本（current 指向的那个永不删）
 boxpigma update --check            # 只看当前版本 / 最新版本，不下载、不写盘、不改 current
 boxpigma update --dry-run          # 只打印计划：下什么、装到哪、校验哪个文件
 boxpigma update --version v1.5.0   # 指定版本（`latest` 之外的都按 tag 下载）
+boxpigma update --channel beta     # 跟随 beta 通道（stable + beta）
+boxpigma update --manifest https://updates.example/boxpigma-updates.json
 boxpigma update --rollback         # 切回上一个版本（连按两次会在两个版本间来回）
 boxpigma update --mirror https://mirror.example --dir ~/.local/bin
-boxpigma update --insecure         # SHA256SUMS 取不到时也装（不做完整性校验）
+boxpigma update --insecure         # 校验和取不到时也装（不做完整性校验）
 ```
 
-`--mirror` 相当于脚本里的 `--host`，`--dir` / `--checksums` / `--force` / `--insecure` 与脚本同名参数一致；`--check` 的版本查询与资产探测也走镜像（跟脚本里 `--host` 覆盖 latest 查询一样），所以只能连镜像的环境照样能 check。它只处理 `releases/` 已经存在的目录：**首次安装仍然走上面的脚本**（建目录、装进 `releases/`、提示 `PATH` 都是脚本的事）。同一个版本已装好时是 no-op，`--force` 重装。
+`--mirror` 相当于脚本里的 `--host`，`--dir` / `--checksums` / `--force` / `--insecure` 与脚本同名参数一致。它影响固定版本和旧 release 的 GitHub 前缀；`latest` 的清单地址由 `--manifest` / `BOXPIGMA_UPDATE_URL` 或 channel 决定。它只处理 `releases/` 已经存在的目录：**首次安装仍然走上面的脚本**（建目录、装进 `releases/`、提示 `PATH` 都是脚本的事）。同一个版本已装好时是 no-op，`--force` 重装。
 
 `--mirror` 是**前缀替换**：把 URL 里的 `https://github.com` 换成你给的那串。
 
@@ -534,6 +546,7 @@ journalctl --user -u boxpigma -f     # 日志
 | `[keys]` | 键位重绑：`命令名 = "键序列"`（单键或空格分隔的多键，可带 `ctrl+`/`alt+`），`""` 为解绑；不写＝用命令表自带的键 |
 | `[terminal]` | 鼠标捕获与光标形状 |
 | `[notify]` | 桌面通知开关（切歌 / 出错） |
+| `[update] channel` | `stable` / `beta` / `alpha` 更新通道；与 Launcher 相同的原生清单，可被 `--channel` 或 `BOXPIGMA_UPDATE_CHANNEL` 覆盖 |
 | `[cache]` | 内容缓存与 save-on-play |
 | `[audio]` | 播放链：`resample`（用 `rubato` 转换采样率，采样率一致时不动样本）、`[[audio.eq]]`（每段 `freq`/`gain_db`/`q`，参量峰值滤波）、`[audio.loudness]`（`target_lufs`/`max_gain_db`，EBU R128 响度归一化） |
 

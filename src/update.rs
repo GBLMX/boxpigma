@@ -8,6 +8,7 @@
 //! install.
 
 use std::{
+    collections::HashMap,
     fs,
     path::{Path, PathBuf},
     process::Command,
@@ -16,12 +17,19 @@ use std::{
 
 use color_eyre::eyre::{Result, bail, eyre};
 use reqwest::Client;
+use semver::Version;
+use serde::Deserialize;
 use sha2::{Digest, Sha256};
 use time::{OffsetDateTime, format_description::FormatItem, macros::format_description};
+
+use crate::config::UpdateChannel;
 
 /// Where releases come from; `--mirror` replaces the `https://github.com` prefix.
 const REPO: &str = "GBLMX/pigma";
 const HOST: &str = "https://github.com";
+/// Stable manifest used when no channel-specific feed is available.
+const FALLBACK_MANIFEST_URL: &str =
+    "https://github.com/GBLMX/pigma/releases/latest/download/boxpigma-updates.json";
 /// How many version directories to keep, current included — install.sh's `$Keep`.
 const KEEP: usize = 3;
 /// The release target this binary was built for. `build.rs` bakes in cargo's own `TARGET` so
@@ -46,6 +54,47 @@ pub struct Options {
     pub insecure: bool,
     pub dry_run: bool,
     pub rollback: bool,
+    /// Release feed selected by `[update] channel`, `--channel`, or the environment.
+    pub channel: UpdateChannel,
+    /// Full manifest URL override (`BOXPIGMA_UPDATE_URL` or `--manifest`).
+    pub manifest: Option<String>,
+}
+
+/// One release feed document. It intentionally has the same shape as the launcher's
+/// `ferriso-updates.json`: version, notes, date, and a platform map.
+#[derive(Debug, Deserialize)]
+struct Manifest {
+    version: String,
+    #[serde(default)]
+    notes: Option<String>,
+    #[serde(default)]
+    pub_date: Option<String>,
+    #[serde(default)]
+    platforms: HashMap<String, Platform>,
+}
+
+#[derive(Debug, Deserialize)]
+struct Platform {
+    url: String,
+    #[serde(default)]
+    install_urls: Vec<String>,
+    #[serde(default)]
+    signature: Option<String>,
+    /// Boxpigma-specific integrity value. Older manifests may omit it; the updater then
+    /// falls back to the release's sibling `SHA256SUMS`.
+    #[serde(default)]
+    sha256: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct ReleaseInfo {
+    version: String,
+    notes: Option<String>,
+    published: Option<String>,
+    asset_url: String,
+    install_url: String,
+    signature: Option<String>,
+    sha256: Option<String>,
 }
 
 /// Run `boxpigma update` end to end.
@@ -80,7 +129,7 @@ pub async fn run(opts: Options) -> Result<()> {
     let client = http_client()?;
 
     if opts.check {
-        check(&client, &layout, host_of(opts.mirror.as_deref())).await?;
+        check(&client, &layout, &opts).await?;
         return Ok(());
     }
     if opts.rollback {
@@ -173,6 +222,103 @@ fn asset_name() -> String {
     format!("boxpigma-{TARGET}.tar.gz")
 }
 
+/// The platform key used by the native update manifests.
+fn platform_key() -> String {
+    format!("{}-{}", std::env::consts::OS, std::env::consts::ARCH)
+}
+
+fn explicit_manifest(opts: &Options) -> Option<String> {
+    opts.manifest
+        .as_deref()
+        .map(str::trim)
+        .filter(|url| !url.is_empty())
+        .map(str::to_string)
+        .or_else(|| {
+            std::env::var("BOXPIGMA_UPDATE_URL")
+                .ok()
+                .map(|url| url.trim().to_string())
+                .filter(|url| !url.is_empty())
+        })
+}
+
+async fn fetch_manifest(client: &Client, url: &str) -> Result<Manifest> {
+    let response = client
+        .get(url)
+        .timeout(Duration::from_secs(10))
+        .send()
+        .await
+        .map_err(|error| eyre!("拿不到更新清单 {url}：{error}"))?;
+    if !response.status().is_success() {
+        bail!("拿不到更新清单 {url}：HTTP {}", response.status());
+    }
+    response
+        .json::<Manifest>()
+        .await
+        .map_err(|error| eyre!("更新清单 {url} 格式不对：{error}"))
+}
+
+/// Fetch the channel manifest, falling back to the stable GitHub asset. The fallback
+/// mirrors the launcher: a mirror outage must not make an installed client unable to
+/// discover a release.
+async fn fetch_release(client: &Client, opts: &Options) -> Result<ReleaseInfo> {
+    let explicit = explicit_manifest(opts);
+    let primary = explicit
+        .clone()
+        .unwrap_or_else(|| opts.channel.manifest_url().to_string());
+    let manifest = match fetch_manifest(client, &primary).await {
+        Ok(manifest) => manifest,
+        Err(primary_error) if explicit.is_none() => fetch_manifest(client, FALLBACK_MANIFEST_URL)
+            .await
+            .map_err(|fallback_error| eyre!("{primary_error}; {fallback_error}"))?,
+        Err(error) => return Err(error),
+    };
+
+    release_from_manifest(manifest, &platform_key())
+        .ok_or_else(|| eyre!("更新清单里没有 {} 的产物", platform_key()))
+}
+
+fn release_from_manifest(manifest: Manifest, key: &str) -> Option<ReleaseInfo> {
+    let platform = manifest.platforms.get(key)?;
+    if platform.url.trim().is_empty() {
+        return None;
+    }
+    let install_url = platform
+        .install_urls
+        .first()
+        .cloned()
+        .unwrap_or_else(|| platform.url.clone());
+    Some(ReleaseInfo {
+        version: manifest.version,
+        notes: manifest.notes,
+        published: manifest.pub_date,
+        asset_url: platform.url.clone(),
+        install_url,
+        signature: platform.signature.clone(),
+        sha256: platform.sha256.clone(),
+    })
+}
+
+fn is_newer(candidate: &str, current: &str) -> bool {
+    let Ok(candidate) = Version::parse(candidate.trim_start_matches('v')) else {
+        return false;
+    };
+    let Ok(current) = Version::parse(current.trim_start_matches('v')) else {
+        return false;
+    };
+    candidate > current
+}
+
+fn asset_from_url(url: &str) -> String {
+    url.rsplit('/').next().unwrap_or_default().to_string()
+}
+
+fn checksums_url(asset_url: &str) -> String {
+    let prefix = asset_url
+        .rsplit_once('/')
+        .map_or(asset_url, |(prefix, _)| prefix);
+    format!("{prefix}/SHA256SUMS")
+}
+
 /// The version number a pinned `--version` names, or `None` for `latest` (which the binary
 /// itself reports only after unpacking).
 fn explicit_version(version: &str) -> Result<Option<String>> {
@@ -238,8 +384,7 @@ fn version_of(bin: &Path) -> Option<String> {
 ///
 /// `source` is a local file when one exists at that path and a URL otherwise — the same
 /// `<url|file>` install.sh accepts.
-async fn fetch_checksums(client: &Client, source: &str) -> Result<Option<String>> {
-    let asset = asset_name();
+async fn fetch_checksums(client: &Client, source: &str, asset: &str) -> Result<Option<String>> {
     let body = if Path::new(source).is_file() {
         fs::read_to_string(source).unwrap_or_default()
     } else {
@@ -253,7 +398,7 @@ async fn fetch_checksums(client: &Client, source: &str) -> Result<Option<String>
     if body.trim().is_empty() {
         return Ok(None);
     }
-    match parse_checksums(&body, &asset) {
+    match parse_checksums(&body, asset) {
         Some(want) => Ok(Some(want)),
         // The list arrived but does not mention this asset — not something to install past.
         None => bail!("SHA256SUMS 里没有 {asset} 的记录（{source}）"),
@@ -318,19 +463,74 @@ async fn download(client: &Client, url: &str, version: &str, asset: &str) -> Res
         .map_err(|_| eyre!("下载失败：{url} —— 网络不通？可以用 --mirror 指向镜像"))
 }
 
-/// Download, verify, unpack and publish a release — then point `current` at it.
-async fn install(client: &Client, layout: &Layout, opts: &Options) -> Result<()> {
+struct ReleaseSpec {
+    label: String,
+    asset: String,
+    asset_url: String,
+    checksums_source: String,
+    pinned: Option<String>,
+    manifest_sha256: Option<String>,
+}
+
+/// Resolve `latest` through the channel manifest and fall back to the release redirect
+/// when no manifest exists yet. A pinned `--version` stays on the direct GitHub/mirror path.
+async fn resolve_release(client: &Client, opts: &Options) -> Result<ReleaseSpec> {
+    if opts.version == "latest" {
+        match fetch_release(client, opts).await {
+            Ok(release) => {
+                let asset = asset_from_url(&release.asset_url);
+                let checksums_source = match opts.checksums.as_deref() {
+                    Some(source) if !source.is_empty() => source.to_string(),
+                    _ => checksums_url(&release.asset_url),
+                };
+                let manifest_sha256 = opts
+                    .checksums
+                    .as_deref()
+                    .is_none_or(str::is_empty)
+                    .then_some(release.sha256)
+                    .flatten();
+                return Ok(ReleaseSpec {
+                    label: release.version.clone(),
+                    asset,
+                    asset_url: release.asset_url,
+                    checksums_source,
+                    pinned: Some(release.version),
+                    manifest_sha256,
+                });
+            }
+            Err(error) => {
+                // Do not hide a manifest problem behind a silent downgrade to the redirect.
+                eprintln!("更新清单不可用，回退到 latest release：{error}");
+            }
+        }
+    }
+
     let base = base_url(host_of(opts.mirror.as_deref()), &opts.version);
     let asset = asset_name();
     let asset_url = format!("{base}/{asset}");
     let pinned = explicit_version(&opts.version)?;
-    let default_checksums = format!("{base}/SHA256SUMS");
     let checksums_source = match opts.checksums.as_deref() {
         Some(source) if !source.is_empty() => source.to_string(),
-        _ => default_checksums.clone(),
+        _ => format!("{base}/SHA256SUMS"),
     };
+    Ok(ReleaseSpec {
+        label: opts.version.clone(),
+        asset,
+        asset_url,
+        checksums_source,
+        pinned,
+        manifest_sha256: None,
+    })
+}
 
-    println!("boxpigma update: {REPO} {}", opts.version);
+/// Download, verify, unpack and publish a release — then point `current` at it.
+async fn install(client: &Client, layout: &Layout, opts: &Options) -> Result<()> {
+    let spec = resolve_release(client, opts).await?;
+    let asset = spec.asset.clone();
+    let asset_url = spec.asset_url.clone();
+    let pinned = spec.pinned.clone();
+
+    println!("boxpigma update: {REPO} {}", spec.label);
     println!("  安装目录   {}", layout.dir.display());
     println!("  平台       {TARGET}");
     println!("  资产       {asset_url}");
@@ -349,29 +549,39 @@ async fn install(client: &Client, layout: &Layout, opts: &Options) -> Result<()>
     match opts.checksums.as_deref() {
         Some("") => {}
         Some(source) => println!("  校验       {source}"),
-        None => println!("  校验       {default_checksums}"),
+        None if spec.manifest_sha256.is_some() => println!("  校验       清单内 SHA256"),
+        None => println!("  校验       {}", spec.checksums_source),
     }
 
-    let want = match fetch_checksums(client, &checksums_source).await? {
-        Some(want) => Some(want),
-        // No list means no verification, and an updater that installs unverified bytes is
-        // exactly what a mirror user — the one most likely to be missing this file — must not
-        // get by accident. So this is a refusal with two ways out, not a warning: `--insecure`
-        // says it out loud, `--checksums` supplies a list of your own, and `--dry-run` (which
-        // writes nothing) only reports what a real run would do.
-        None if opts.insecure => {
-            println!("  校验       拿不到 {checksums_source} —— --insecure 已放行，这次不做校验");
-            None
+    let want = if let Some(want) = spec.manifest_sha256 {
+        Some(want)
+    } else {
+        match fetch_checksums(client, &spec.checksums_source, &asset).await? {
+            Some(want) => Some(want),
+            // No list means no verification, and an updater that installs unverified bytes is
+            // exactly what a mirror user — the one most likely to be missing this file — must not
+            // get by accident. So this is a refusal with two ways out, not a warning: `--insecure`
+            // says it out loud, `--checksums` supplies a list of your own, and `--dry-run` (which
+            // writes nothing) only reports what a real run would do.
+            None if opts.insecure => {
+                println!(
+                    "  校验       拿不到 {} —— --insecure 已放行，这次不做校验",
+                    spec.checksums_source
+                );
+                None
+            }
+            None if opts.dry_run => {
+                println!(
+                    "  校验       拿不到 {} —— 真跑会被拒（要 --checksums 或 --insecure）",
+                    spec.checksums_source
+                );
+                None
+            }
+            None => bail!(
+                "取不到校验和 {} —— 已中止：没有校验就不安装。\n               自己指定一份：--checksums <URL|本地文件>\n               或明确放行：  --insecure（不做完整性校验）",
+                spec.checksums_source
+            ),
         }
-        None if opts.dry_run => {
-            println!(
-                "  校验       拿不到 {checksums_source} —— 真跑会被拒（要 --checksums 或 --insecure）"
-            );
-            None
-        }
-        None => bail!(
-            "取不到校验和 {checksums_source} —— 已中止：没有校验就不安装。\n               自己指定一份：--checksums <URL|本地文件>\n               或明确放行：  --insecure（不做完整性校验）"
-        ),
     };
 
     // The reuse check is read-only — no download, no write — so `--dry-run` reports its verdict
@@ -403,7 +613,7 @@ async fn install(client: &Client, layout: &Layout, opts: &Options) -> Result<()>
         .map_err(|e| eyre!("创建不了临时目录 {}（{e}）", scratch.tmp.display()))?;
 
     println!("  下载中…");
-    let archive = download(client, &asset_url, &opts.version, &asset).await?;
+    let archive = download(client, &asset_url, &spec.label, &asset).await?;
     if let Some(want) = &want {
         let got = sha256_hex(&archive);
         if *want != got {
@@ -480,11 +690,7 @@ async fn install(client: &Client, layout: &Layout, opts: &Options) -> Result<()>
 
 /// `--check`: report what is installed and whether a newer release exists. Reads only —
 /// `current` and the lock file are never touched, and being out of date is not an error.
-///
-/// `host` is what `--mirror` resolved to. Both the release lookup and the asset probe go
-/// through it — hardcoding `HOST` here left the people who need a mirror most (the ones who
-/// cannot reach `github.com` at all) with a `--check` that could only fail.
-async fn check(client: &Client, layout: &Layout, host: &str) -> Result<()> {
+async fn check(client: &Client, layout: &Layout, opts: &Options) -> Result<()> {
     let rel = layout.current_target();
     let installed = rel
         .as_deref()
@@ -494,26 +700,54 @@ async fn check(client: &Client, layout: &Layout, host: &str) -> Result<()> {
         (Some(rel), None) => format!("releases/{rel}"),
         (None, _) => "（未安装）".to_string(),
     };
-    let latest = latest_tag(client, host).await?;
+    let host = host_of(opts.mirror.as_deref());
 
     println!("  安装目录   {}", layout.dir.display());
     println!("  当前       {current}");
-    println!("  最新       v{latest}");
-    if installed.as_deref() == Some(latest.as_str()) {
-        println!("  已是最新   无需升级");
-        return Ok(());
-    }
+    println!("  通道       {}", opts.channel);
 
-    println!("  有新版     运行 `boxpigma update` 升级");
-    // Worth knowing before downloading ~15 MB that this platform has nothing in that release.
-    let asset = asset_name();
-    let asset_url = format!("{host}/{REPO}/releases/latest/download/{asset}");
-    if let Ok(response) = client.head(&asset_url).send().await
-        && response.status() == reqwest::StatusCode::NOT_FOUND
-    {
-        println!("  注意       release v{latest} 里没有 {asset}");
+    match fetch_release(client, opts).await {
+        Ok(release) => {
+            println!("  最新       v{}", release.version);
+            if let Some(published) = &release.published {
+                println!("  发布时间   {published}");
+            }
+            if let Some(notes) = &release.notes {
+                println!("  说明       {notes}");
+            }
+            println!("  资产       {}", release.asset_url);
+            println!("  安装包     {}", release.install_url);
+            if release.signature.is_some() {
+                println!("  签名       已提供");
+            }
+            if !is_newer(&release.version, installed.as_deref().unwrap_or("0.0.0")) {
+                println!("  已是最新   无需升级");
+                return Ok(());
+            }
+            println!("  有新版     运行 `boxpigma update` 升级");
+            Ok(())
+        }
+        Err(manifest_error) => {
+            // Releases published before the manifest existed still work through the old
+            // latest-tag redirect. Keep that fallback for them.
+            eprintln!("更新清单不可用，回退到 latest release：{manifest_error}");
+            let latest = latest_tag(client, host).await?;
+            println!("  最新       v{latest}");
+            if installed.as_deref() == Some(latest.as_str()) {
+                println!("  已是最新   无需升级");
+                return Ok(());
+            }
+            println!("  有新版     运行 `boxpigma update` 升级");
+            let asset = asset_name();
+            let asset_url = format!("{host}/{REPO}/releases/latest/download/{asset}");
+            if let Ok(response) = client.head(&asset_url).send().await
+                && response.status() == reqwest::StatusCode::NOT_FOUND
+            {
+                println!("  注意       release v{latest} 里没有 {asset}");
+            }
+            Ok(())
+        }
     }
-    Ok(())
 }
 
 /// The newest release tag, read off the redirect `…/releases/latest` lands on. `host` is
@@ -984,6 +1218,44 @@ mod tests {
     }
 
     #[test]
+    fn manifest_selects_the_current_platform_and_keeps_its_metadata() {
+        let key = platform_key();
+        let json = format!(
+            r#"{{
+                "version": "1.8.0-beta.1",
+                "notes": "beta build",
+                "pub_date": "2026-10-25T00:00:00Z",
+                "platforms": {{
+                    "{key}": {{
+                        "url": "https://updates.example/boxpigma-{TARGET}.tar.gz",
+                        "install_urls": ["https://updates.example/boxpigma-{TARGET}.tar.gz"],
+                        "sha256": "abc"
+                    }}
+                }}
+            }}"#
+        );
+        let manifest: Manifest = serde_json::from_str(&json).expect("parse manifest");
+        let release = release_from_manifest(manifest, &key).expect("select platform");
+        assert_eq!(release.version, "1.8.0-beta.1");
+        assert_eq!(release.notes.as_deref(), Some("beta build"));
+        assert_eq!(release.sha256.as_deref(), Some("abc"));
+        assert_eq!(
+            checksums_url(&release.asset_url),
+            "https://updates.example/SHA256SUMS"
+        );
+        assert_eq!(asset_from_url(&release.asset_url), asset_name());
+    }
+
+    #[test]
+    fn semver_order_handles_prereleases() {
+        assert!(is_newer("1.8.0", "1.7.0"));
+        assert!(is_newer("1.8.0-beta.1", "1.7.0"));
+        assert!(is_newer("1.8.0", "1.8.0-beta.1"));
+        assert!(!is_newer("1.8.0-beta.1", "1.8.0"));
+        assert!(!is_newer("not-a-version", "1.7.0"));
+    }
+
+    #[test]
     fn parse_checksums_finds_this_asset_and_nothing_else() {
         let asset = asset_name();
         let body = format!(
@@ -1223,6 +1495,79 @@ mod tests {
         (host, seen)
     }
 
+    fn manifest_host(body: String) -> (String, Arc<Mutex<Vec<String>>>) {
+        let listener = std::net::TcpListener::bind("127.0.0.1:0").expect("bind a loopback port");
+        let host = format!(
+            "http://{}",
+            listener.local_addr().expect("loopback address")
+        );
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let recorder = Arc::clone(&seen);
+
+        std::thread::spawn(move || {
+            for mut stream in listener.incoming().flatten() {
+                let mut reader = BufReader::new(stream.try_clone().expect("clone the stream"));
+                let mut request_line = String::new();
+                if reader.read_line(&mut request_line).is_err() || request_line.is_empty() {
+                    continue;
+                }
+                loop {
+                    let mut header = String::new();
+                    match reader.read_line(&mut header) {
+                        Ok(0) | Err(_) => break,
+                        Ok(_) if header == "\r\n" => break,
+                        Ok(_) => {}
+                    }
+                }
+                let path = request_line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or_default()
+                    .to_string();
+                recorder.lock().expect("record the request").push(path);
+
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = stream.write_all(response.as_bytes());
+                let _ = stream.flush();
+            }
+        });
+
+        (host, seen)
+    }
+
+    #[tokio::test]
+    async fn fetch_release_reads_an_explicit_manifest_before_github() {
+        let key = platform_key();
+        let body = format!(
+            r#"{{"version":"1.8.0","platforms":{{"{key}":{{"url":"https://updates.example/boxpigma-{TARGET}.tar.gz","sha256":"abc"}}}}}}"#
+        );
+        let (host, seen) = manifest_host(body);
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let client = http_client().expect("http client");
+        let mut opts = opts_for(host.clone(), false, false);
+        opts.manifest = Some(format!("{host}/boxpigma-updates.json"));
+
+        let release = fetch_release(&client, &opts)
+            .await
+            .expect("read explicit manifest");
+        assert_eq!(release.version, "1.8.0");
+        assert_eq!(release.sha256.as_deref(), Some("abc"));
+        assert_eq!(
+            release.asset_url,
+            format!("https://updates.example/boxpigma-{TARGET}.tar.gz")
+        );
+        assert!(
+            seen.lock()
+                .expect("recorded requests")
+                .iter()
+                .any(|path| path == "/boxpigma-updates.json")
+        );
+    }
+
     /// `--check` has to ask the mirror: `--mirror` reaches both requests, the release lookup
     /// and the asset probe. Both used to name `HOST` directly, so a mirror user — precisely
     /// someone who cannot reach `github.com` — got a `--check` that could only fail.
@@ -1248,7 +1593,9 @@ mod tests {
             .create_link(&layout.current(), &rel)
             .expect("point current at the installed version");
 
-        check(&client, &layout, &host).await.expect("check");
+        check(&client, &layout, &opts_for(host.clone(), false, false))
+            .await
+            .expect("check");
 
         let paths = seen.lock().expect("read the recorded paths").clone();
         let asset_path = format!("/GBLMX/pigma/releases/latest/download/{}", asset_name());
@@ -1272,12 +1619,14 @@ mod tests {
             check: false,
             version: "latest".into(),
             dir: None,
-            mirror: Some(host),
+            mirror: Some(host.clone()),
             checksums: None,
             force: false,
             insecure,
             dry_run,
             rollback: false,
+            channel: UpdateChannel::Stable,
+            manifest: Some(format!("{host}/boxpigma-updates.json")),
         }
     }
 

@@ -121,11 +121,65 @@ jobs:
             > SHA256SUMS
           cat SHA256SUMS
 
+      - name: Generate native update manifest
+        env:
+          TAG: ${{ github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          python3 - <<'PY'
+          import datetime
+          import hashlib
+          import json
+          import os
+          from pathlib import Path
+
+          tag = os.environ["TAG"]
+          repo = os.environ["REPO"]
+          version = tag.removeprefix("v")
+          base = f"https://github.com/{repo}/releases/download/{tag}"
+
+          hashes = {}
+          for line in Path("artifacts/SHA256SUMS").read_text().splitlines():
+              digest, name = line.split()
+              hashes[name] = digest
+
+          platforms = {}
+          for archive in Path("artifacts").rglob("boxpigma-*.tar.gz"):
+              name = archive.name
+              target = name.removeprefix("boxpigma-").removesuffix(".tar.gz")
+              if target.startswith("x86_64-"):
+                  key = "linux-x86_64"
+              elif target.startswith("aarch64-"):
+                  key = "linux-aarch64"
+              else:
+                  continue
+              url = f"{base}/{name}"
+              platforms[key] = {
+                  "url": url,
+                  "install_urls": [url],
+                  "sha256": hashes[name],
+              }
+
+          notes = Path("release-notes.md").read_text()
+          manifest = {
+              "version": version,
+              "notes": notes,
+              "pub_date": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+              "platforms": platforms,
+          }
+          Path("artifacts/boxpigma-updates.json").write_text(
+              json.dumps(manifest, indent=2) + "\n"
+          )
+          print(json.dumps(manifest, indent=2))
+          PY
+
       - name: Upload release
         uses: softprops/action-gh-release@v3
         with:
+          prerelease: ${{ contains(github.ref_name, '-') }}
           files: |
             artifacts/SHA256SUMS
+            artifacts/boxpigma-updates.json
             artifacts/boxpigma-*/boxpigma-*
           body_path: release-notes.md
         env:
