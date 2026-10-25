@@ -25,7 +25,7 @@ use crate::{
     state::{ContentState, LoginField, LoginMethod, PaginationInfo},
     utils::{boxpigma_cache_dir, boxpigma_config_dir, path::expand_tilde},
 };
-use ferriso_core::{App, Command};
+use ferriso_core::{App, Command, Subscription};
 
 const TICK: Duration = Duration::from_millis(100);
 const LISTEN_THRESHOLD: Duration = Duration::from_secs(30);
@@ -147,6 +147,7 @@ pub enum Internal {
         songs: Vec<Arc<SongInfo>>,
         playlist_id: u64,
     },
+    Tick,
     Noop,
 }
 
@@ -1738,11 +1739,18 @@ impl App for Backend {
         }
     }
 
-    fn tick_interval(&self) -> Option<Duration> {
-        Some(TICK)
+    fn subscriptions(&self) -> Subscription<Message> {
+        Subscription::interval(1, TICK, Message::Internal(Internal::Tick))
     }
 
-    fn tick(&mut self) -> Command<Message> {
+    fn shutdown(&mut self) {
+        self.engine.save_session();
+        self.service.client().flush_cookies();
+    }
+}
+
+impl Backend {
+    fn poll_tick(&mut self) -> Command<Message> {
         let mut commands = Vec::new();
         for _ in 0..MAX_EVENTS_PER_TICK {
             let Some(event) = self.events.try_next() else {
@@ -1763,13 +1771,6 @@ impl App for Backend {
         Command::batch(commands)
     }
 
-    fn shutdown(&mut self) {
-        self.engine.save_session();
-        self.service.client().flush_cookies();
-    }
-}
-
-impl Backend {
     fn login_field_mut(&mut self, field: LoginField) -> &mut String {
         match field {
             LoginField::Account => &mut self.login_account,
@@ -2096,6 +2097,7 @@ impl Backend {
                 self.queued_playlists.insert(playlist_id);
                 Command::none()
             }
+            Internal::Tick => self.poll_tick(),
             Internal::Noop => Command::none(),
         }
     }

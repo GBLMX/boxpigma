@@ -1879,8 +1879,8 @@ dependencies = [
 
 [[package]]
 name = "ferriso-core"
-version = "0.1.0"
-source = "git+https://github.com/GBLMX/Ferriso?rev=e021c99cebd729f272f203fa924f5e9b56322ae2#e021c99cebd729f272f203fa924f5e9b56322ae2"
+version = "0.3.1"
+source = "git+https://github.com/GBLMX/Ferriso?rev=55d17458e4de47c52ec2aec3a916d361bc7a13a4#55d17458e4de47c52ec2aec3a916d361bc7a13a4"
 dependencies = [
  "ferriso-diagnostics",
  "futures",
@@ -1889,8 +1889,8 @@ dependencies = [
 
 [[package]]
 name = "ferriso-diagnostics"
-version = "0.1.0"
-source = "git+https://github.com/GBLMX/Ferriso?rev=e021c99cebd729f272f203fa924f5e9b56322ae2#e021c99cebd729f272f203fa924f5e9b56322ae2"
+version = "0.3.1"
+source = "git+https://github.com/GBLMX/Ferriso?rev=55d17458e4de47c52ec2aec3a916d361bc7a13a4#55d17458e4de47c52ec2aec3a916d361bc7a13a4"
 dependencies = [
  "miette",
  "thiserror 2.0.20",
@@ -1898,12 +1898,13 @@ dependencies = [
 
 [[package]]
 name = "ferriso-gui"
-version = "0.1.0"
-source = "git+https://github.com/GBLMX/Ferriso?rev=e021c99cebd729f272f203fa924f5e9b56322ae2#e021c99cebd729f272f203fa924f5e9b56322ae2"
+version = "0.3.1"
+source = "git+https://github.com/GBLMX/Ferriso?rev=55d17458e4de47c52ec2aec3a916d361bc7a13a4#55d17458e4de47c52ec2aec3a916d361bc7a13a4"
 dependencies = [
  "bytemuck",
  "ferriso-core",
  "ferriso-diagnostics",
+ "ferriso-keymap",
  "futures",
  "iced",
  "naga",
@@ -1911,12 +1912,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "ferriso-keymap"
+version = "0.3.1"
+source = "git+https://github.com/GBLMX/Ferriso?rev=55d17458e4de47c52ec2aec3a916d361bc7a13a4#55d17458e4de47c52ec2aec3a916d361bc7a13a4"
+
+[[package]]
 name = "ferriso-tui"
-version = "0.1.0"
-source = "git+https://github.com/GBLMX/Ferriso?rev=e021c99cebd729f272f203fa924f5e9b56322ae2#e021c99cebd729f272f203fa924f5e9b56322ae2"
+version = "0.3.1"
+source = "git+https://github.com/GBLMX/Ferriso?rev=55d17458e4de47c52ec2aec3a916d361bc7a13a4#55d17458e4de47c52ec2aec3a916d361bc7a13a4"
 dependencies = [
  "crossterm 0.29.0",
  "ferriso-core",
+ "ferriso-keymap",
+ "futures",
  "ratatui",
  "tokio",
 ]
