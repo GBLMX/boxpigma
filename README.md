@@ -388,7 +388,7 @@ Add-Content $PROFILE '. "$HOME/.config/powershell/boxpigma.ps1"'
 | `boxpigma status --json` | 以 JSON 输出 |
 | `boxpigma status -L` | 列出当前播放队列（`▶` 标记当前曲目，行尾带歌曲 id），`-L --json` 输出原始 `QueueSnapshot`（含 `key`） |
 | `boxpigma status --template "{name}  {artist}  {current}/{duration}  {status}  vol {volume}%"` | 自定义 plain 输出模板 |
-| `boxpigma msg list` | 列出当前播放队列（`▶` 标记当前曲目），`--json` 输出原始 `QueueSnapshot` |
+| `boxpigma msg list` | 列出当前播放队列（`▶` 标记当前曲目，行尾带歌曲 id），`--json` 输出原始 `QueueSnapshot`（含 `key`） |
 | `boxpigma msg next` / `boxpigma msg previous` | 下一首 / 上一首 |
 | `boxpigma msg pause` / `boxpigma msg play` | 暂停 / 播放（`boxpigma msg play <song-id>` 按 id 跳播队列中的歌曲） |
 | `boxpigma msg search <keyword>` | 搜索并返回歌曲数据（解析顺序：NCM 失败重试一次 → 云盘兜底，标出 `source` 和 `id`），再 `boxpigma msg play <id>` 播放选中的那首 |

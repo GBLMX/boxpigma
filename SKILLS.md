@@ -94,11 +94,11 @@ boxpigma status --template "{artist} – {name} [{status}] vol {volume}%"
 ## `boxpigma msg list` – 列出播放队列
 
 查询**正在运行**的实例的当前播放队列（复用 TUI 队列表格的显示逻辑），
-`▶` 标记当前曲目：
+`▶` 标记当前曲目，行尾带歌曲 id：
 
 ```bash
-boxpigma msg list            # 列出当前播放队列
-boxpigma msg list --json     # 原始 QueueSnapshot（id/name/singer/album/duration_ms）
+boxpigma msg list            # 列出当前播放队列（行尾 id 可直接用于 msg play）
+boxpigma msg list --json     # 原始 QueueSnapshot（key/current_index/songs；song 含 id/name/singer/album/duration_ms）
 ```
 
 选项：`--json`、`--socket <SOCKET>`。
