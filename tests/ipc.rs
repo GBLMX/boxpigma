@@ -90,6 +90,7 @@ async fn queue_round_trip() {
     ipc::set_socket_path_override(Some(tmp_socket("queue")));
 
     let queue = QueueSnapshot {
+        key: "test-queue".into(),
         current_index: Some(1),
         songs: vec![
             boxpigma::ipc::QueueEntry {
@@ -119,6 +120,7 @@ async fn queue_round_trip() {
     tokio::time::sleep(std::time::Duration::from_millis(50)).await;
 
     let got = ipc::fetch_queue().await.expect("fetch queue");
+    assert_eq!(got.key, "test-queue");
     assert_eq!(got.current_index, Some(1));
     assert_eq!(got.songs.len(), 2);
     assert_eq!(got.songs[1].name, "Song B");

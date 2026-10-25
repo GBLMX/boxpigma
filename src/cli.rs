@@ -158,17 +158,7 @@ pub async fn status(template: &str, json: bool, list: bool) -> color_eyre::Resul
         if json {
             println!("{}", serde_json::to_string_pretty(&queue)?);
         } else {
-            let current = queue.current_index;
-            for (i, song) in queue.songs.iter().enumerate() {
-                let marker = if Some(i) == current { ">" } else { " " };
-                println!(
-                    "{marker} {:<3} {:<32} {:<24} {}",
-                    i + 1,
-                    song.name,
-                    song.singer,
-                    format_duration(song.duration_ms)
-                );
-            }
+            print!("{}", render_queue(&queue));
         }
         return Ok(());
     }
@@ -186,8 +176,9 @@ pub async fn status(template: &str, json: bool, list: bool) -> color_eyre::Resul
     Ok(())
 }
 
-/// Render the playback queue the way the TUI's queue table does: `▶` marks the
-/// currently playing song, rows show a 1-based index, title, artist and duration.
+/// Render the playback queue as plain text: `▶` marks the currently playing
+/// song, and each row ends with the song id so it can feed
+/// `boxpigma msg play <id>`.
 fn render_queue(queue: &ipc::QueueSnapshot) -> String {
     let current = queue.current_index;
     let mut out = String::new();
@@ -196,11 +187,12 @@ fn render_queue(queue: &ipc::QueueSnapshot) -> String {
         use std::fmt::Write;
         let _ = writeln!(
             out,
-            "{marker}{:02}  {:<24}  {:<20}  {}",
+            "{marker}{:02}  {:<24}  {:<20}  {:<8} {}",
             i + 1,
             song.name,
             song.singer,
-            format_duration(song.duration_ms)
+            format_duration(song.duration_ms),
+            song.id
         );
     }
     out
@@ -777,6 +769,7 @@ mod tests {
     #[test]
     fn print_queue_marks_current_song() {
         let queue = ipc::QueueSnapshot {
+            key: "test-queue".into(),
             current_index: Some(0),
             songs: vec![
                 ipc::QueueEntry {
@@ -797,14 +790,16 @@ mod tests {
         };
         let out = render_queue(&queue);
         let expected = format!(
-            "▶01  {:<24}  {:<20}  {}\n {:02}  {:<24}  {:<20}  {}\n",
+            "▶01  {:<24}  {:<20}  {:<8} {}\n {:02}  {:<24}  {:<20}  {:<8} {}\n",
             "Song A",
             "Artist A",
             format_duration(125_000),
+            1,
             2,
             "Song B",
             "Artist B",
             format_duration(65_000),
+            2,
         );
         assert_eq!(out, expected);
     }

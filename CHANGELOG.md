@@ -7,6 +7,12 @@
 - `boxpigma -d` 的守护进程仍保留旧 `App`，因此 IPC socket 与 MPRIS 目前只在守护进程可用；交互式 actor TUI 的 socket/MPRIS 桥接尚未接入。
 - 交互式 TUI 使用固定的终端键位；`config.toml` 的 `[keys]` 仍由守护进程使用。
 
+### 🐛 Bug Fixes
+
+- *(cache)* **内容/歌词/封面缓存改为原子写**：下载内容、歌词和封面此前用 `fs::write` 原地覆盖，进程崩溃或其他实例读取时可能看到空文件/半截 JSON。现在统一走 `utils::fs::write_atomic`（同目录临时文件 + `fsync` + `rename`），并复用已有测试。此修复对应上游 `4089ecd` 的缓存硬化。
+- *(cache)* **内容缓存时间戳回退不再下溢**：如果墙钟被调回，`now - cached_at` 会在 debug 构建中 panic；现在未来时间戳直接按过期处理。
+- *(cli)* **`status -L` 输出歌曲 id 和队列 key**：文本行尾增加歌曲 id，可直接喂给 `boxpigma msg play <id>`；`QueueSnapshot` 增加带 `serde(default)` 的 `key` 字段，旧守护进程仍可被解析。该输出复用 `msg list` 的渲染器，两个入口保持一致。
+
 ## [1.7.0] - 2026-10-21
 
 ### 🚀 Features

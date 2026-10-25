@@ -484,10 +484,15 @@ impl QueueEntry {
     }
 }
 
-/// Full queue listing served to `boxpigma status -L`: the current song's queue
-/// index (0-based, `None` when nothing is queued) plus the songs.
+/// Full queue listing served to `boxpigma status -L`: the active queue's display
+/// key, the current song's index (0-based, `None` when nothing is queued) and
+/// the songs.
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
 pub struct QueueSnapshot {
+    /// Display key of the active queue. Older daemons may omit it; treat that as
+    /// an empty key.
+    #[serde(default)]
+    pub key: String,
     pub current_index: Option<usize>,
     pub songs: Vec<QueueEntry>,
 }

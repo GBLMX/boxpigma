@@ -7,7 +7,10 @@ use std::{
 use serde::{Deserialize, Serialize};
 
 use super::CacheManager;
-use crate::state::{ContentState, PaginationInfo};
+use crate::{
+    state::{ContentState, PaginationInfo},
+    utils::fs::write_atomic,
+};
 
 #[derive(Serialize, Deserialize)]
 struct ContentCacheEntry {
@@ -39,7 +42,9 @@ impl CacheManager {
             let data = fs::read_to_string(path).ok()?;
             let entry: ContentCacheEntry = serde_json::from_str(&data).ok()?;
             let now = SystemTime::now().duration_since(UNIX_EPOCH).ok()?.as_secs();
-            if now - entry.cached_at > ttl_secs {
+            // A future timestamp (the wall clock moved backwards) is expired:
+            // `now - cached_at` would otherwise underflow in debug builds.
+            if entry.cached_at > now || now - entry.cached_at > ttl_secs {
                 return None;
             }
             Some((entry.data, entry.pagination))
@@ -55,10 +60,6 @@ impl CacheManager {
         content: &ContentState,
         pagination: Option<&PaginationInfo>,
     ) {
-        if let Err(e) = fs::create_dir_all(&self.content_dir) {
-            log::warn!("Failed to create content cache dir: {e}");
-            return;
-        }
         let cached_at = SystemTime::now()
             .duration_since(UNIX_EPOCH)
             .map(|d| d.as_secs())
@@ -70,7 +71,7 @@ impl CacheManager {
         };
         match serde_json::to_string(&entry) {
             Ok(json) => {
-                if let Err(e) = fs::write(self.content_path(api), json) {
+                if let Err(e) = write_atomic(&self.content_path(api), json.as_bytes()) {
                     log::warn!("Failed to write content cache for {api}: {e}");
                 }
             }
@@ -86,5 +87,49 @@ impl CacheManager {
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
             Err(e) => log::warn!("Failed to remove content cache for {api}: {e}"),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::{
+        path::PathBuf,
+        time::{SystemTime, UNIX_EPOCH},
+    };
+
+    use super::*;
+    use crate::cache::CacheManager;
+
+    fn scratch(label: &str) -> PathBuf {
+        let dir = std::env::temp_dir().join(format!(
+            "boxpigma-content-test-{}-{label}",
+            std::process::id()
+        ));
+        let _ = fs::remove_dir_all(&dir);
+        dir
+    }
+
+    #[tokio::test]
+    async fn a_future_cache_timestamp_is_treated_as_expired() {
+        let base = scratch("future");
+        let cache = CacheManager::new(base.join("downloads"), base.clone(), "{}".into());
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock after epoch")
+            .as_secs();
+        let path = cache.content_path("api");
+        fs::create_dir_all(path.parent().expect("cache parent")).expect("cache dir");
+        let entry = ContentCacheEntry {
+            data: ContentState::Empty,
+            pagination: None,
+            cached_at: now + 3_600,
+        };
+        fs::write(&path, serde_json::to_vec(&entry).expect("cache json")).expect("cache file");
+
+        assert!(
+            cache.load_content_cache_async("api", 60).await.is_none(),
+            "a cache written by a clock ahead of ours must not underflow or load"
+        );
+        let _ = fs::remove_dir_all(base);
     }
 }

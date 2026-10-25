@@ -386,7 +386,7 @@ Add-Content $PROFILE '. "$HOME/.config/powershell/boxpigma.ps1"'
 |---|---|
 | `boxpigma status` | 查询状态（默认 plain 文本） |
 | `boxpigma status --json` | 以 JSON 输出 |
-| `boxpigma status -L` | 列出当前播放队列（`>` 标记当前曲目），`-L --json` 输出原始 `QueueSnapshot` |
+| `boxpigma status -L` | 列出当前播放队列（`▶` 标记当前曲目，行尾带歌曲 id），`-L --json` 输出原始 `QueueSnapshot`（含 `key`） |
 | `boxpigma status --template "{name}  {artist}  {current}/{duration}  {status}  vol {volume}%"` | 自定义 plain 输出模板 |
 | `boxpigma msg list` | 列出当前播放队列（`▶` 标记当前曲目），`--json` 输出原始 `QueueSnapshot` |
 | `boxpigma msg next` / `boxpigma msg previous` | 下一首 / 上一首 |

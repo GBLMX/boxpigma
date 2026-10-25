@@ -75,7 +75,7 @@ boxpigma status [OPTIONS]
 |---|---|
 | `--template <TEMPLATE>` | 自定义 plain 输出。占位符：`{name}` `{artist}` `{album}` `{current}`/`{position}` `{duration}` `{volume}` `{status}` `{mode}` `{id}` `{liked}`。覆盖配置 `cli_status_template` |
 | `--json` | JSON 输出（优先于配置 `cli_status_format`） |
-| `-L, --list` | 列出当前播放队列（`>` 标记当前曲目）；配合 `--json` 输出原始 `QueueSnapshot` |
+| `-L, --list` | 列出当前播放队列（`▶` 标记当前曲目，行尾带歌曲 id）；配合 `--json` 输出原始 `QueueSnapshot`（含 `key`） |
 | `--socket <SOCKET>` | 指定实例的 socket（覆盖全局/默认） |
 
 `{status}` 取值：`playing` / `paused` / `stopped`；`{mode}` 取值：`sequential` / `repeat_one` /
@@ -134,7 +134,7 @@ boxpigma msg [OPTIONS] <ACTION> [VALUE]
 
 ```bash
 boxpigma msg play
-boxpigma msg play 187186        # 按歌曲 id 播放（先 `boxpigma msg list --json` 查 id）
+boxpigma msg play 187186        # 按歌曲 id 播放（`boxpigma status -L` 的行尾就是 id）
 boxpigma msg search 周杰伦       # 返回: source + id + 歌名 - 歌手（在守护进程内搜索，跨实例可用）
 boxpigma msg play 33894312      # 播放上面搜到的某首
 boxpigma msg toggle_play
