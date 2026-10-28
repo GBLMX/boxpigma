@@ -28,6 +28,9 @@ use crate::config::UpdateChannel;
 /// Where releases come from; `--mirror` replaces the `https://github.com` prefix.
 const REPO: &str = "GBLMX/pigma";
 const HOST: &str = "https://github.com";
+/// Canonical repository after the pigma → boxpigma rename. Older manifests still say
+/// `GBLMX/pigma`; GitHub redirects, but proxy mirrors handle the redirect poorly.
+const CANONICAL_REPO: &str = "GBLMX/boxpigma";
 /// Stable manifest used when no channel-specific feed is available.
 const FALLBACK_MANIFEST_URL: &str =
     "https://github.com/GBLMX/pigma/releases/latest/download/boxpigma-updates.json";
@@ -194,11 +197,13 @@ fn default_install_dir() -> Option<PathBuf> {
 }
 
 /// One client for every request: the 300 s total timeout is install.sh's `curl --max-time 300`
-/// (the checksum request shares the ceiling, though it moves a few hundred bytes). The TLS
+/// (the checksum request shares the ceiling, though it moves a few hundred bytes). Proxy
+/// mirrors used by `--mirror` are more reliable over HTTP/1.1 than HTTP/2. The TLS
 /// provider is installed once at startup in `main.rs`.
 fn http_client() -> Result<Client> {
     Client::builder()
         .user_agent("boxpigma-update")
+        .http1_only()
         .timeout(Duration::from_secs(300))
         .build()
         .map_err(Into::into)
@@ -214,9 +219,15 @@ fn mirror_url(url: &str, mirror: Option<&str>) -> String {
     let Some(host) = mirror.filter(|host| !host.is_empty()) else {
         return url.to_owned();
     };
+    let legacy = format!("{HOST}/{REPO}");
+    let canonical = format!("{HOST}/{CANONICAL_REPO}");
+    let url = url
+        .strip_prefix(&legacy)
+        .map(|rest| format!("{canonical}{rest}"))
+        .unwrap_or_else(|| url.to_owned());
     url.strip_prefix(HOST)
         .map(|rest| format!("{host}{rest}"))
-        .unwrap_or_else(|| url.to_owned())
+        .unwrap_or(url)
 }
 
 /// Where this release's assets live, spelled the way install.sh spells it.
@@ -1291,7 +1302,7 @@ mod tests {
                 "https://github.com/GBLMX/pigma/releases/download/v1.7.0/boxpigma.tar.gz",
                 Some(mirror),
             ),
-            "https://proxy.example/https://github.com/GBLMX/pigma/releases/download/v1.7.0/boxpigma.tar.gz"
+            "https://proxy.example/https://github.com/GBLMX/boxpigma/releases/download/v1.7.0/boxpigma.tar.gz"
         );
         assert_eq!(
             mirror_url("https://updates.example/boxpigma.tar.gz", Some(mirror)),
