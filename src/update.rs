@@ -209,6 +209,16 @@ fn host_of(mirror: Option<&str>) -> &str {
     mirror.filter(|host| !host.is_empty()).unwrap_or(HOST)
 }
 
+/// Apply `--mirror` to a GitHub URL, not just to URLs built from `HOST`.
+fn mirror_url(url: &str, mirror: Option<&str>) -> String {
+    let Some(host) = mirror.filter(|host| !host.is_empty()) else {
+        return url.to_owned();
+    };
+    url.strip_prefix(HOST)
+        .map(|rest| format!("{host}{rest}"))
+        .unwrap_or_else(|| url.to_owned())
+}
+
 /// Where this release's assets live, spelled the way install.sh spells it.
 fn base_url(host: &str, version: &str) -> String {
     if version == "latest" {
@@ -274,7 +284,10 @@ async fn fetch_release(client: &Client, opts: &Options) -> Result<ReleaseInfo> {
         Err(error) => return Err(error),
     };
 
-    release_from_manifest(manifest, &platform_key())
+    let mut release = release_from_manifest(manifest, &platform_key())?;
+    release.asset_url = mirror_url(&release.asset_url, opts.mirror.as_deref());
+    release.install_url = mirror_url(&release.install_url, opts.mirror.as_deref());
+    Ok(release)
 }
 
 fn release_from_manifest(manifest: Manifest, key: &str) -> Result<ReleaseInfo> {
@@ -464,11 +477,10 @@ fn reused(layout: &Layout, want: Option<&str>, pinned: Option<&str>) -> Option<S
 /// apart: 404 (no asset for this platform, or a wrong tag), a transport error, and anything
 /// else that came back with a status code.
 async fn download(client: &Client, url: &str, version: &str, asset: &str) -> Result<Vec<u8>> {
-    let response = client
-        .get(url)
-        .send()
-        .await
-        .map_err(|_| eyre!("下载失败：{url} —— 网络不通？可以用 --mirror 指向镜像"))?;
+    let response =
+        client.get(url).send().await.map_err(|error| {
+            eyre!("下载失败：{url} —— {error}；网络不通？可以用 --mirror 指向镜像")
+        })?;
     let status = response.status();
     if status == reqwest::StatusCode::NOT_FOUND {
         bail!(
@@ -482,7 +494,7 @@ async fn download(client: &Client, url: &str, version: &str, asset: &str) -> Res
         .bytes()
         .await
         .map(|bytes| bytes.to_vec())
-        .map_err(|_| eyre!("下载失败：{url} —— 网络不通？可以用 --mirror 指向镜像"))
+        .map_err(|error| eyre!("下载失败：{url} —— {error}；网络不通？可以用 --mirror 指向镜像"))
 }
 
 struct ReleaseSpec {
@@ -1268,6 +1280,26 @@ mod tests {
         assert_eq!(
             asset_from_url(&release.asset_url).expect("safe asset"),
             asset_name()
+        );
+    }
+
+    #[test]
+    fn mirror_rewrites_manifest_asset_urls() {
+        let mirror = "https://proxy.example/https://github.com";
+        assert_eq!(
+            mirror_url(
+                "https://github.com/GBLMX/pigma/releases/download/v1.7.0/boxpigma.tar.gz",
+                Some(mirror),
+            ),
+            "https://proxy.example/https://github.com/GBLMX/pigma/releases/download/v1.7.0/boxpigma.tar.gz"
+        );
+        assert_eq!(
+            mirror_url("https://updates.example/boxpigma.tar.gz", Some(mirror)),
+            "https://updates.example/boxpigma.tar.gz"
+        );
+        assert_eq!(
+            mirror_url("https://github.com/a", None),
+            "https://github.com/a"
         );
     }
 

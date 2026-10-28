@@ -230,12 +230,18 @@ boxpigma update --mirror https://mirror.example --dir ~/.local/bin
 boxpigma update --insecure         # 校验和取不到时也装（不做完整性校验）
 ```
 
-`--mirror` 相当于脚本里的 `--host`，`--dir` / `--checksums` / `--force` / `--insecure` 与脚本同名参数一致。它影响固定版本和旧 release 的 GitHub 前缀；`latest` 的清单地址由 `--manifest` / `BOXPIGMA_UPDATE_URL` 或 channel 决定。它只处理 `releases/` 已经存在的目录：**首次安装仍然走上面的脚本**（建目录、装进 `releases/`、提示 `PATH` 都是脚本的事）。同一个版本已装好时是 no-op，`--force` 重装。
+`--mirror` 相当于脚本里的 `--host`，`--dir` / `--checksums` / `--force` / `--insecure` 与脚本同名参数一致。它影响固定版本、旧 release，以及清单内指向 GitHub 的资产 URL；`latest` 的清单地址仍由 `--manifest` / `BOXPIGMA_UPDATE_URL` 或 channel 决定。它只处理 `releases/` 已经存在的目录：**首次安装仍然走上面的脚本**（建目录、装进 `releases/`、提示 `PATH` 都是脚本的事）。同一个版本已装好时是 no-op，`--force` 重装。
 
 `--mirror` 是**前缀替换**：把 URL 里的 `https://github.com` 换成你给的那串。
 
 - 自建镜像就架在 `github.com` 的位置：`--mirror https://mirror.example`。
 - ghproxy 这类把**完整原 URL** 当路径的代理，要连原 URL 一起给：`--mirror https://proxy.example/https://github.com` —— 只给主机名会拼出 `https://proxy.example/GBLMX/pigma/...` 而 404。
+
+例如 GitHub 直连不可用时：
+
+```sh
+boxpigma update --mirror https://ghproxy.imciel.com/https://github.com
+```
 
 `SHA256SUMS` 取不到时，`update` 与 `install.sh` 默认都**拒绝安装**（不做完整性校验就不装），并说明两条出路：`--checksums <URL|本地文件>` 自己指定一份，或 `--insecure` 明确放行。`--dry-run` 只报告、不中止。
 

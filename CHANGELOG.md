@@ -17,6 +17,10 @@
 - *(cache)* **内容缓存时间戳回退不再下溢**：如果墙钟被调回，`now - cached_at` 会在 debug 构建中 panic；现在未来时间戳直接按过期处理。
 - *(cli)* **`status -L` 输出歌曲 id 和队列 key**：文本行尾增加歌曲 id，可直接喂给 `boxpigma msg play <id>`；`QueueSnapshot` 增加带 `serde(default)` 的 `key` 字段，旧守护进程仍可被解析。该输出复用 `msg list` 的渲染器，两个入口保持一致。
 
+- *(update)* **`--mirror` 覆盖清单资产 URL**：`latest` 通过清单解析出的 GitHub
+  资产地址现在也会做 `https://github.com` 前缀替换；下载失败时错误信息会带上底层
+  reqwest 原因，不再只显示“下载中…失败”。
+
 ## [1.7.0] - 2026-10-21
 
 ### 🚀 Features
