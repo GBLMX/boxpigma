@@ -109,6 +109,7 @@ boxpigma 把网易云音乐与本地音频播放带进终端：流式播放、�
 - 内容页表头、选中行与当前播放行；歌手页三栏（热门歌曲 / 专辑 / 相似歌手）
 - 歌词页跟随播放位置并显示译文；队列页可切队列、点歌、清空
 - 播放条带封面（`ratatui-image`，失败时半块字符画）、频谱、音高读数、时长与音量
+- 播放条使用主题色 aurora 动态背景与 pulse 边框；当前歌词行使用 shimmer 扫光
 - 主题来自 `config.toml` 的 `[theme]` / 内置主题；`:` 命令与设置页可切换并自动保存
 - 设置页把常用开关、主题、音质、音量收进一张表；改动即时生效并写回 `config.toml`
 - `:` 命令行（无 Tab 补全）；键位可由 `[keys]` 重绑；鼠标点击 / 双击 / 滚轮 / 进度条 seek / 音量区调音量
@@ -310,7 +311,7 @@ cargo build --release
 交互式 `boxpigma` 与 `boxpigma-gui` 共用 `boxpigma::backend`：一个 actor 独占
 `ApiService`、`PlaybackEngine`、缓存、登录和导航状态；终端只发语义消息、收不可变快照。
 Tokio runtime、actor 启停和终端生命周期由 `ferriso-tui` 管理，GUI 由 `ferriso-gui`
-管理。依赖固定到 Ferriso `6791fa7`（0.3.1，MIT）。
+管理。依赖固定到 Ferriso `1924a60`（0.3.1，MIT）。
 
 ```text
 终端 ──Message──▶ backend actor ──Arc<View> 快照──▶ ratatui 终端
@@ -328,7 +329,7 @@ Tokio runtime、actor 启停和终端生命周期由 `ferriso-tui` 管理，GUI 
 ### 桌面界面（`boxpigma-gui`）
 
 GUI 的后端已经按 Ferriso 的 actor 模型抽成 `boxpigma::backend`，并直接依赖其
-`ferriso-core` 与 `ferriso-gui`（MIT，Git 依赖 `6791fa7`，0.3.1）：一个任务独占
+`ferriso-core` 与 `ferriso-gui`（MIT，Git 依赖 `1924a60`，0.3.1）：一个任务独占
 `ApiService`、`PlaybackEngine`、缓存、登录和导航状态，窗口只发语义消息、收只读快照；
 Tokio runtime、actor 启停和 iced 窗口生命周期都由 Ferriso 的 adapter 管理。
 

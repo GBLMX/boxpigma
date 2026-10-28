@@ -1881,7 +1881,7 @@ dependencies = [
 [[package]]
 name = "ferriso-core"
 version = "0.3.1"
-source = "git+https://github.com/GBLMX/Ferriso?rev=6791fa728400fdca331f9ee9f2a8dff982345f19#6791fa728400fdca331f9ee9f2a8dff982345f19"
+source = "git+https://github.com/GBLMX/Ferriso?rev=1924a600bdd31df34426c8c683463350c18873d0#1924a600bdd31df34426c8c683463350c18873d0"
 dependencies = [
  "ferriso-diagnostics",
  "futures",
@@ -1891,7 +1891,7 @@ dependencies = [
 [[package]]
 name = "ferriso-diagnostics"
 version = "0.3.1"
-source = "git+https://github.com/GBLMX/Ferriso?rev=6791fa728400fdca331f9ee9f2a8dff982345f19#6791fa728400fdca331f9ee9f2a8dff982345f19"
+source = "git+https://github.com/GBLMX/Ferriso?rev=1924a600bdd31df34426c8c683463350c18873d0#1924a600bdd31df34426c8c683463350c18873d0"
 dependencies = [
  "miette",
  "thiserror 2.0.20",
@@ -1900,7 +1900,7 @@ dependencies = [
 [[package]]
 name = "ferriso-gui"
 version = "0.3.1"
-source = "git+https://github.com/GBLMX/Ferriso?rev=6791fa728400fdca331f9ee9f2a8dff982345f19#6791fa728400fdca331f9ee9f2a8dff982345f19"
+source = "git+https://github.com/GBLMX/Ferriso?rev=1924a600bdd31df34426c8c683463350c18873d0#1924a600bdd31df34426c8c683463350c18873d0"
 dependencies = [
  "bytemuck",
  "ferriso-core",
@@ -1915,12 +1915,12 @@ dependencies = [
 [[package]]
 name = "ferriso-keymap"
 version = "0.3.1"
-source = "git+https://github.com/GBLMX/Ferriso?rev=6791fa728400fdca331f9ee9f2a8dff982345f19#6791fa728400fdca331f9ee9f2a8dff982345f19"
+source = "git+https://github.com/GBLMX/Ferriso?rev=1924a600bdd31df34426c8c683463350c18873d0#1924a600bdd31df34426c8c683463350c18873d0"
 
 [[package]]
 name = "ferriso-tui"
 version = "0.3.1"
-source = "git+https://github.com/GBLMX/Ferriso?rev=6791fa728400fdca331f9ee9f2a8dff982345f19#6791fa728400fdca331f9ee9f2a8dff982345f19"
+source = "git+https://github.com/GBLMX/Ferriso?rev=1924a600bdd31df34426c8c683463350c18873d0#1924a600bdd31df34426c8c683463350c18873d0"
 dependencies = [
  "crossterm 0.29.0",
  "ferriso-core",

@@ -74,9 +74,13 @@
 - **只保留 Linux（2026-09-29）**：Windows / macOS / BSD 的支持连同代码一起删除 —— WASAPI 独占输出整块（`src/playback/exclusive.rs` 599 行、`[audio] exclusive`、`wasapi` 依赖）、IPC 的命名管道传输（`ipc/transport/windows.rs`）、Windows 控制台背景探测（`terminal/background/windows.rs`）、自更新里的 `.zip` 解包与 `mklink /J` junction、`install.ps1`（570 行），以及全部 `#[cfg(unix)]` / `#[cfg(windows)]` / `cfg!(windows)` 分支（现在无条件编译）；cpal 的 host 选择里 FreeBSD/NetBSD/OpenBSD/DragonFly 一并消失。**刻意保留 14 处 `#[cfg(all(target_os = "linux", target_env = "gnu"))]`**：它编码的是真实的 glibc/ALSA 约束（读 `/proc/self/status` + `libc::malloc_trim`），是唯一在 Linux 上仍可能为假的门，不是可移植性开关。发布契约未动：`boxpigma-<triple>.tar.gz` 与裸名 `SHA256SUMS` 仍是 `install.sh` 的 `awk` 查找和 `src/update.rs` 解析时的格式。同一工具链前后对拍：二进制 **−7,896 B（−0.07%，11,220,552 → 11,212,656 B）** —— 删掉的 Windows 代码本来就不进 Linux 构建，只有 `exclusive.rs` 的平台中立辅助逻辑此前会被编进去。代价：3 个只测 WASAPI 编码/采样率协商的单测随文件删除
 
 - **Ferriso sidecar API 已可用，但 boxpigma 尚未迁移（2026-10-28）**：依赖升级到
-  Ferriso `6791fa7`，框架新增 `CoreContext`、`Sidecars`、`run_with_app_services` 与
+  Ferriso `1924a60`，框架新增 `CoreContext`、`Sidecars`、`run_with_app_services` 与
   `request_exit`。boxpigma 目前的 IPC/MPRIS bridge 仍在 `Backend` 内，因为 status、
   queue 与 search 需要同一份 actor 数据；这是后续迁移候选，不是当前行为变化。
+
+- **TUI 美术升级（2026-10-28）**：接入 `ferriso-tui::art`，播放条使用 aurora 动态
+  背景与 pulse 边框，当前歌词使用 shimmer 扫光；时间来自现有 80ms tick，不增加
+  独立动画线程。颜色仍从主题调色板推导，不硬编码。
 
 ## 二、已否决（附依据）
 

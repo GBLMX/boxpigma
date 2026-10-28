@@ -3,6 +3,7 @@
 //! Nothing here calls the backend: rows, gauges and overlays are built from
 //! [`View`] plus the renderer's cursors and hit map.
 
+use ferriso_tui::art;
 use ferriso_tui::ratatui::{
     Frame,
     layout::{Alignment, Constraint, Layout, Rect},
@@ -59,6 +60,19 @@ pub(super) fn draw(tui: &mut Tui, view: &View, frame: &mut Frame) {
 
     if tui.help {
         draw_help(&palette, area, frame);
+    }
+}
+
+fn art_time(tui: &Tui) -> f32 {
+    tui.tick as f32 * 0.08
+}
+
+fn art_palette(p: &super::theme::Palette) -> art::Palette {
+    art::Palette {
+        abyss: p.background,
+        glow: p.surface,
+        accent: p.accent,
+        highlight: p.text,
     }
 }
 
@@ -753,6 +767,13 @@ fn draw_lyrics(
             Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
         }
     };
+    let lyric_time = art_time(tui);
+    let shimmer = art::Shimmer {
+        period: 3.4,
+        width: 6.0,
+        base: p.accent,
+        highlight: p.text,
+    };
     let mut lines: Vec<Line> = Vec::new();
     let mut current_line = 0usize;
     for (index, lyric) in view.player.lyrics.iter().enumerate() {
@@ -768,10 +789,23 @@ fn draw_lyrics(
         } else {
             Style::default().fg(p.text)
         };
-        lines.push(Line::from(Span::styled(
-            format!("  {} ", lyric.text),
-            line_style,
-        )));
+        let text = format!("  {} ", lyric.text);
+        let text_len = text.chars().count();
+        if Some(index) == current && style != crate::config::LyricStyle::Plain {
+            let spans = text
+                .chars()
+                .enumerate()
+                .map(|(position, ch)| {
+                    Span::styled(
+                        ch.to_string(),
+                        line_style.fg(shimmer.color_at(position, text_len, lyric_time)),
+                    )
+                })
+                .collect::<Vec<_>>();
+            lines.push(Line::from(spans));
+        } else {
+            lines.push(Line::from(Span::styled(text, line_style)));
+        }
         if let Some(translated) = translation_at(&view.player.translated_lyrics, lyric)
             && view.settings.lyric_translation
         {
@@ -1092,11 +1126,25 @@ fn draw_player(
     area: Rect,
     frame: &mut Frame,
 ) {
+    let time = art_time(tui);
+    let playing = view.player.playing && !view.player.paused;
+    art::Aurora::new(time, art_palette(p))
+        .intensity(if playing { 0.34 } else { 0.14 })
+        .render(area, frame.buffer_mut());
+    let border = if playing {
+        art::Pulse {
+            period: 2.6,
+            min: 0.0,
+            max: 1.0,
+        }
+        .color(time, p.border, p.accent)
+    } else {
+        p.border
+    };
     let block = Block::default()
         .borders(Borders::ALL)
         .border_type(BorderType::Rounded)
-        .border_style(Style::default().fg(p.border))
-        .style(p.panel());
+        .border_style(Style::default().fg(border));
     let inner = block.inner(area);
     frame.render_widget(block, area);
     if inner.width == 0 || inner.height == 0 {

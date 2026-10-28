@@ -7,13 +7,14 @@
 - *(framework)* **Ferriso `55d17458` → `8a2e201`**：升级到移除废弃
   `App::tick_interval` / `App::tick` 兼容层的版本；boxpigma 已经使用
   `Subscription::interval`，不再依赖 actor 自有计时器。
-- *(framework)* **Ferriso `8a2e201` → `6791fa7`**：依赖升级到 Ferriso 新增 `CoreContext`、`Sidecars`、`run_with_app_services` 与 `request_exit` 的版本；boxpigma 当前桥接行为不变，后续可把 IPC/MPRIS 迁移到统一的 sidecar 生命周期。
+- *(framework)* **Ferriso `8a2e201` → `6791fa7` → `1924a60`**：依赖升级到 Ferriso 新增 `CoreContext`、`Sidecars`、`run_with_app_services`、`request_exit` 与 `ferriso-tui::art` 的版本；boxpigma 当前桥接行为不变，后续可把 IPC/MPRIS 迁移到统一的 sidecar 生命周期。
 - *(tui)* **交互式终端迁到共享 actor 后端**：`boxpigma` 不再启动旧的 `App` 渲染循环，而是与 `boxpigma-gui` 共用 `boxpigma::backend`，由 `ferriso-tui` 管理 Tokio runtime、actor、终端与鼠标捕获。终端持有的是 `Arc<View>` 快照，键盘/鼠标只产生语义 `Message`；导航、歌曲/歌单/排行榜/歌手/热搜、分页加载、歌手三栏、队列、歌词、QR/密码/短信登录、签到、设置、命令模式、封面/二维码、点击 seek/音量与瞬时提示都走同一条消息路径。迁移时固定到 `e021c99`（`ferriso-core` / `ferriso-gui` / `ferriso-tui`）。后端补了 `SetTheme` / `SetQuality` / `Search` / 登录字段追加与退格消息，避免快速输入时用旧快照覆盖整…
 - *(tui)* **私人 FM 接入 actor**：复用 `ApiService::personal_fm` / `fm_trash`，新增 `OpenPersonalFm` / `TrashFm` 消息与 `:fm` / `:fmtrash` 命令；`:fm` 拉取后立即开播首曲并展示列表，当前曲目可拉黑。
 - *(tui)* **actor IPC / MPRIS 桥接**：交互式 TUI 现在启动 Unix socket，`status` / `list` / `search` / `msg` 与 MPRIS 都读写同一份 `View` 快照；`switch-list` 走 actor 的端点解析，不再只属于守护进程。
 - *(tui)* **`[keys]` 真正作用于 actor TUI**：命令表派生的 `Keymap` 已在终端输入路径生效，单键与多键序列、`ctrl+` / `alt+`、解绑都与守护进程一致。
 - *(tui)* **旧命令兼容层**：恢复 `:simi` / `:simiplaylist` / `:signin` / `:sms` / `:smslogin` / `:saveonplay` / `:pane` 与相对音量（`:volume +5` / `-10`）；`:lyrics` 恢复为歌词样式切换，页面改用 `:lyrics-page`。
 - *(tui)* **歌词样式与 ASCII 字形**：actor TUI 支持 `window` / `one_line` / `ktv` / `flow` / `plain`；`[symbols]` 的 ASCII 预设现在作用于导航、音量、频谱、spinner 与译文前缀。
+- *(tui)* **高级美术效果**：播放条使用 aurora 动态背景与 pulse 边框，当前歌词使用 shimmer 扫光；全部由现有 tick 驱动，颜色从主题调色板推导。
 
 ### 🐛 Bug Fixes
 
