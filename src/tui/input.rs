@@ -12,15 +12,23 @@ use ferriso_tui::{
     ratatui::layout::Rect,
 };
 
+use std::time::Instant;
+
 use crate::{
     backend::{self, CoreMessage, Page, SearchKind, View},
+    config::{
+        Pane,
+        keymap::{Key as MapKey, Pressed},
+    },
+    layout::{self, Axis},
     state::LoginMethod,
+    utils::Named,
 };
 
 use super::{
-    CommandLine, Focus, Hit, SETTINGS, Tui, activate_artist, activate_content, artist_count,
-    clamp_selection, content_rows, ensure_visible, hit_at, login_fields, page_for_key, seek_by,
-    seek_to, toggle_play, volume_by,
+    CommandLine, Focus, Hit, PaneDrag, SETTINGS, Tui, activate_artist, activate_content,
+    artist_count, clamp_selection, content_rows, ensure_visible, hit_at, login_fields,
+    page_for_key, seek_by, seek_to, toggle_play, volume_by,
 };
 
 pub(super) fn handle(tui: &mut Tui, view: &View, event: Event) -> Outcome<CoreMessage> {
@@ -34,6 +42,12 @@ pub(super) fn handle(tui: &mut Tui, view: &View, event: Event) -> Outcome<CoreMe
 fn key(tui: &mut Tui, view: &View, key: KeyEvent) -> Outcome<CoreMessage> {
     if !matches!(key.kind, KeyEventKind::Press | KeyEventKind::Repeat) {
         return Outcome::Ignored;
+    }
+    if key.modifiers.contains(KeyModifiers::CONTROL)
+        && key.modifiers.contains(KeyModifiers::SHIFT)
+        && let Some(outcome) = pane_key(tui, view, key)
+    {
+        return outcome;
     }
 
     if view.page == Page::Login {
@@ -110,6 +124,22 @@ fn key(tui: &mut Tui, view: &View, key: KeyEvent) -> Outcome<CoreMessage> {
         && let Some(outcome) = settings_key(tui, view, key)
     {
         return outcome;
+    }
+
+    if key.code == KeyCode::Esc {
+        tui.pending_keys.clear();
+    }
+    if let KeyCode::Char(code) = key.code {
+        let mapped = MapKey {
+            code,
+            ctrl: key.modifiers.contains(KeyModifiers::CONTROL),
+            alt: key.modifiers.contains(KeyModifiers::ALT),
+        };
+        match tui.keymap.advance(&mut tui.pending_keys, mapped) {
+            Pressed::Run(name) => return execute_command(tui, view, name),
+            Pressed::Wait => return Outcome::Ignored,
+            Pressed::FallThrough => {}
+        }
     }
 
     match key.code {
@@ -353,10 +383,41 @@ fn execute_command(tui: &mut Tui, view: &View, line: &str) -> Outcome<CoreMessag
         }
         "login" => Outcome::Message(backend::Message::Navigate(Page::Login)),
         "logout" => Outcome::Message(backend::Message::Logout),
-        "sign" | "signin" => Outcome::Message(backend::Message::DailySign),
+        "sign" => Outcome::Message(backend::Message::DailySign),
+        "signin" => match arg.split_whitespace().collect::<Vec<_>>().as_slice() {
+            [account, password] => Outcome::Message(backend::Message::SignIn {
+                account: (*account).to_string(),
+                password: (*password).to_string(),
+            }),
+            _ => {
+                tui.notice("signin 需要账号和密码");
+                Outcome::Ignored
+            }
+        },
+        "sms" => match arg.split_whitespace().collect::<Vec<_>>().as_slice() {
+            [phone] => Outcome::Message(backend::Message::SendSms {
+                phone: (*phone).to_string(),
+            }),
+            _ => {
+                tui.notice("sms 需要一个手机号");
+                Outcome::Ignored
+            }
+        },
+        "smslogin" => match arg.split_whitespace().collect::<Vec<_>>().as_slice() {
+            [phone, code] => Outcome::Message(backend::Message::SmsLogin {
+                phone: (*phone).to_string(),
+                code: (*code).to_string(),
+            }),
+            _ => {
+                tui.notice("smslogin 需要手机号和验证码");
+                Outcome::Ignored
+            }
+        },
         "browse" | "main" => Outcome::Message(backend::Message::Navigate(Page::Browse)),
         "queue" | "playlist" => Outcome::Message(backend::Message::Navigate(Page::Queue)),
-        "lyrics" | "lyric" => Outcome::Message(backend::Message::Navigate(Page::Lyrics)),
+        "lyrics" | "lyric" if arg.is_empty() => Outcome::Message(backend::Message::CycleLyricStyle),
+        "lyrics" | "lyric" => Outcome::Message(backend::Message::SetLyricStyle(arg)),
+        "lyrics-page" | "lyricpage" => Outcome::Message(backend::Message::Navigate(Page::Lyrics)),
         "settings" | "set" => Outcome::Message(backend::Message::Navigate(Page::Settings)),
         "theme" if arg.is_empty() => Outcome::Message(backend::Message::CycleTheme),
         "theme" => Outcome::Message(backend::Message::SetTheme(arg)),
@@ -368,6 +429,18 @@ fn execute_command(tui: &mut Tui, view: &View, line: &str) -> Outcome<CoreMessag
         "prev" | "previous" => Outcome::Message(backend::Message::Prev),
         "like" => Outcome::Message(backend::Message::ToggleLike),
         "refresh" => Outcome::Message(backend::Message::Refresh),
+        "simi" | "similar" => Outcome::Message(backend::Message::OpenSongContext(true)),
+        "simiplaylist" | "songlists" => Outcome::Message(backend::Message::OpenSongContext(false)),
+        "fm" => Outcome::Message(backend::Message::OpenPersonalFm),
+        "fmtrash" | "fm-trash" => Outcome::Message(backend::Message::TrashFm),
+        "saveonplay" => switch(
+            tui,
+            &arg,
+            view.settings.save_on_play,
+            backend::Message::ToggleSaveOnPlay,
+        ),
+        "pane" => pane_command(tui, view, &arg),
+        "navpos" => Outcome::Message(backend::Message::CycleNavPosition),
         "translation" => switch(
             tui,
             &arg,
@@ -407,12 +480,10 @@ fn execute_command(tui: &mut Tui, view: &View, line: &str) -> Outcome<CoreMessag
             Outcome::Ignored
         }
         "search" => Outcome::Message(backend::Message::Search(arg)),
-        "volume" => match arg.parse::<f64>() {
-            Ok(value) => {
-                Outcome::Message(backend::Message::SetVolume((value / 100.0).clamp(0.0, 1.0)))
-            }
-            Err(_) => {
-                tui.notice("volume 需要 0-100 的数字");
+        "volume" => match volume_command(view, &arg) {
+            Some(message) => Outcome::Message(message),
+            None => {
+                tui.notice("volume 需要 0-100、+5 或 -5");
                 Outcome::Ignored
             }
         },
@@ -427,6 +498,53 @@ fn execute_command(tui: &mut Tui, view: &View, line: &str) -> Outcome<CoreMessag
             tui.notice(format!("未知命令：{line}"));
             Outcome::Ignored
         }
+    }
+}
+
+fn volume_command(view: &View, arg: &str) -> Option<CoreMessage> {
+    let arg = arg.trim();
+    if let Some(rest) = arg.strip_prefix('+').or_else(|| arg.strip_prefix('-')) {
+        let number = rest.parse::<f64>().ok()?;
+        let delta = if arg.starts_with('-') {
+            -number
+        } else {
+            number
+        } / 100.0;
+        return Some(backend::Message::SetVolume(
+            (view.player.volume + delta).clamp(0.0, 1.0),
+        ));
+    }
+    let value = arg.parse::<f64>().ok()?;
+    (0.0..=100.0)
+        .contains(&value)
+        .then_some(backend::Message::SetVolume(value / 100.0))
+}
+
+fn pane_command(tui: &mut Tui, view: &View, arg: &str) -> Outcome<CoreMessage> {
+    let mut words = arg.split_whitespace();
+    let Some(name) = words.next() else {
+        tui.notice("pane 需要一个面板名（topbar / navigation / playerbar / mv）");
+        return Outcome::Ignored;
+    };
+    let Some(pane) = Pane::ALL.iter().copied().find(|pane| pane.name() == name) else {
+        tui.notice(format!("未知面板：{name}"));
+        return Outcome::Ignored;
+    };
+    let visible = view.panes.visible(pane);
+    let action = words.next().unwrap_or("toggle");
+    let toggle = match action {
+        "on" => !visible,
+        "off" => visible,
+        "toggle" => true,
+        _ => {
+            tui.notice("pane 只接受 on / off / toggle");
+            return Outcome::Ignored;
+        }
+    };
+    if toggle {
+        Outcome::Message(backend::Message::TogglePane(pane))
+    } else {
+        Outcome::Ignored
     }
 }
 
@@ -744,9 +862,101 @@ fn like_row(tui: &Tui, view: &View) -> Outcome<CoreMessage> {
     }
 }
 
+fn pane_key(tui: &Tui, view: &View, key: KeyEvent) -> Option<Outcome<CoreMessage>> {
+    let nav_is_column = matches!(
+        view.nav_position,
+        crate::config::NavPosition::Left | crate::config::NavPosition::Right
+    );
+    let target = match key.code {
+        KeyCode::Down => Some((Pane::Topbar, Axis::Rows, 1)),
+        KeyCode::Up => Some((Pane::Playerbar, Axis::Rows, 1)),
+        KeyCode::Right if nav_is_column => Some((
+            Pane::Navigation,
+            Axis::Columns,
+            if view.nav_position == crate::config::NavPosition::Left {
+                1
+            } else {
+                -1
+            },
+        )),
+        KeyCode::Left if nav_is_column => Some((
+            Pane::Navigation,
+            Axis::Columns,
+            if view.nav_position == crate::config::NavPosition::Left {
+                -1
+            } else {
+                1
+            },
+        )),
+        _ => None,
+    }?;
+    let (pane, axis, sign) = target;
+    let wanted = (i32::from(view.panes.size(pane)) + sign * 2).max(0) as u16;
+    let available = match axis {
+        Axis::Columns => tui.shell_area.width,
+        Axis::Rows => tui.shell_area.height,
+    };
+    Some(Outcome::Message(backend::Message::SetPaneSize(
+        pane,
+        layout::clamp(pane, axis, wanted, available),
+    )))
+}
+
+fn pane_mouse(tui: &mut Tui, view: &View, mouse: &MouseEvent) -> Option<Outcome<CoreMessage>> {
+    match mouse.kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let divider = *tui.pane_dividers.at(mouse.column, mouse.row)?;
+            let double = tui.last_pane_click.is_some_and(|(last, at)| {
+                last == divider && at.elapsed() < std::time::Duration::from_millis(400)
+            });
+            tui.last_pane_click = Some((divider, Instant::now()));
+            if double {
+                tui.pane_drag = None;
+                tui.pane_preview = None;
+                Some(Outcome::Message(backend::Message::TogglePane(divider.pane)))
+            } else {
+                tui.pane_drag = Some(PaneDrag {
+                    divider,
+                    start_size: view.panes.size(divider.pane),
+                    column: mouse.column,
+                    row: mouse.row,
+                });
+                Some(Outcome::Ignored)
+            }
+        }
+        MouseEventKind::Drag(MouseButton::Left) => {
+            let drag = tui.pane_drag?;
+            let delta = match drag.divider.axis {
+                Axis::Columns => i32::from(mouse.column) - i32::from(drag.column),
+                Axis::Rows => i32::from(mouse.row) - i32::from(drag.row),
+            };
+            let wanted = drag.divider.size_for(drag.start_size, delta);
+            let available = match drag.divider.axis {
+                Axis::Columns => tui.shell_area.width,
+                Axis::Rows => tui.shell_area.height,
+            };
+            let size = layout::clamp(drag.divider.pane, drag.divider.axis, wanted, available);
+            tui.pane_preview = Some((drag.divider.pane, size));
+            Some(Outcome::Ignored)
+        }
+        MouseEventKind::Up(MouseButton::Left) => {
+            let drag = tui.pane_drag.take()?;
+            let Some((pane, size)) = tui.pane_preview.take() else {
+                return Some(Outcome::Ignored);
+            };
+            debug_assert_eq!(pane, drag.divider.pane);
+            Some(Outcome::Message(backend::Message::SetPaneSize(pane, size)))
+        }
+        _ => None,
+    }
+}
+
 fn mouse(tui: &mut Tui, view: &View, mouse: MouseEvent) -> Outcome<CoreMessage> {
     if !tui.mouse_enabled() {
         return Outcome::Ignored;
+    }
+    if let Some(outcome) = pane_mouse(tui, view, &mouse) {
+        return outcome;
     }
     match mouse.kind {
         MouseEventKind::Down(MouseButton::Left) => {
@@ -869,12 +1079,14 @@ fn fraction_in(rect: Rect, column: u16) -> f64 {
 
 #[cfg(test)]
 mod tests {
-    use ferriso_tui::crossterm::event::{Event, KeyCode, KeyEvent, KeyModifiers};
+    use ferriso_tui::crossterm::event::{
+        Event, KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind,
+    };
 
     use super::*;
     use crate::{
         backend::{Banner, LoginView, NavView, PlayerView, SearchView, SettingsView, ThemeView},
-        config::Config,
+        config::{Config, NavPosition, Pane, PanesConfig},
         state::{ContentState, LoginField},
     };
 
@@ -946,8 +1158,11 @@ mod tests {
                 lyric_translation: true,
                 visualizer: false,
                 pitch: false,
+                lyric_style: crate::config::LyricStyle::default(),
             },
             theme: ThemeView::default(),
+            nav_position: NavPosition::Left,
+            panes: PanesConfig::default(),
         }
     }
 
@@ -1006,5 +1221,157 @@ mod tests {
         ));
         assert_eq!(tui.focus, Focus::Search);
         assert!(tui.search_editing);
+    }
+
+    #[test]
+    fn ctrl_shift_arrows_resize_panes() {
+        let view = view();
+        let mut tui = Tui::new(&Config::default());
+        tui.shell_area = Rect::new(0, 0, 120, 40);
+        let before = view.panes.size(Pane::Topbar);
+        let outcome = handle(
+            &mut tui,
+            &view,
+            Event::Key(KeyEvent::new(
+                KeyCode::Down,
+                KeyModifiers::CONTROL | KeyModifiers::SHIFT,
+            )),
+        );
+        match outcome {
+            Outcome::Message(backend::Message::SetPaneSize(Pane::Topbar, size)) => {
+                assert!(size > before);
+            }
+            _ => panic!("expected topbar resize"),
+        }
+    }
+
+    #[test]
+    fn dragging_a_divider_previews_and_commits_the_size() {
+        let view = view();
+        let mut tui = Tui::new(&Config::default());
+        tui.shell_area = Rect::new(0, 0, 120, 40);
+        tui.pane_dividers.push(crate::layout::Divider::new(
+            Pane::Playerbar,
+            crate::layout::Axis::Rows,
+            -1,
+            Rect::new(0, 20, 10, 1),
+        ));
+        let start = view.panes.size(Pane::Playerbar);
+
+        let mouse = |kind, row| MouseEvent {
+            kind,
+            column: 1,
+            row,
+            modifiers: KeyModifiers::NONE,
+        };
+        let down = handle(
+            &mut tui,
+            &view,
+            Event::Mouse(mouse(MouseEventKind::Down(MouseButton::Left), 20)),
+        );
+        assert!(matches!(down, Outcome::Ignored));
+        let drag = handle(
+            &mut tui,
+            &view,
+            Event::Mouse(mouse(MouseEventKind::Drag(MouseButton::Left), 17)),
+        );
+        assert!(matches!(drag, Outcome::Ignored));
+        assert!(matches!(
+            tui.pane_preview,
+            Some((Pane::Playerbar, size)) if size > start
+        ));
+        match handle(
+            &mut tui,
+            &view,
+            Event::Mouse(mouse(MouseEventKind::Up(MouseButton::Left), 17)),
+        ) {
+            Outcome::Message(backend::Message::SetPaneSize(Pane::Playerbar, size)) => {
+                assert!(size > start);
+            }
+            _ => panic!("expected playerbar resize"),
+        }
+    }
+
+    #[test]
+    fn legacy_commands_reach_the_actor() {
+        let view = view();
+        let mut tui = Tui::new(&Config::default());
+        assert!(matches!(
+            execute_command(&mut tui, &view, "fm"),
+            Outcome::Message(backend::Message::OpenPersonalFm)
+        ));
+        assert!(matches!(
+            execute_command(&mut tui, &view, "simi"),
+            Outcome::Message(backend::Message::OpenSongContext(true))
+        ));
+        assert!(matches!(
+            execute_command(&mut tui, &view, "simiplaylist"),
+            Outcome::Message(backend::Message::OpenSongContext(false))
+        ));
+        assert!(matches!(
+            execute_command(&mut tui, &view, "signin user pass"),
+            Outcome::Message(backend::Message::SignIn { .. })
+        ));
+    }
+
+    #[test]
+    fn volume_accepts_absolute_and_relative_values() {
+        let mut view = view();
+        view.player.volume = 0.5;
+        let mut tui = Tui::new(&Config::default());
+        assert!(matches!(
+            execute_command(&mut tui, &view, "volume 75"),
+            Outcome::Message(backend::Message::SetVolume(value))
+                if (value - 0.75).abs() < 1e-9
+        ));
+        assert!(matches!(
+            execute_command(&mut tui, &view, "volume +10"),
+            Outcome::Message(backend::Message::SetVolume(value))
+                if (value - 0.60).abs() < 1e-9
+        ));
+        assert!(matches!(
+            execute_command(&mut tui, &view, "volume -20"),
+            Outcome::Message(backend::Message::SetVolume(value))
+                if (value - 0.30).abs() < 1e-9
+        ));
+    }
+
+    #[test]
+    fn configured_keys_run_the_same_command() {
+        let view = view();
+        let mut config = Config::default();
+        config.keys.insert("visualizer".into(), "x".into());
+        let mut tui = Tui::new(&config);
+        assert!(matches!(
+            press(&mut tui, &view, KeyCode::Char('x')),
+            Outcome::Message(backend::Message::ToggleVisualizer)
+        ));
+    }
+
+    #[test]
+    fn lyric_and_nav_commands_are_available() {
+        let view = view();
+        let mut tui = Tui::new(&Config::default());
+        assert!(matches!(
+            execute_command(&mut tui, &view, "lyrics"),
+            Outcome::Message(backend::Message::CycleLyricStyle)
+        ));
+        assert!(matches!(
+            execute_command(&mut tui, &view, "lyrics ktv"),
+            Outcome::Message(backend::Message::SetLyricStyle(style)) if style == "ktv"
+        ));
+        assert!(matches!(
+            execute_command(&mut tui, &view, "navpos"),
+            Outcome::Message(backend::Message::CycleNavPosition)
+        ));
+    }
+
+    #[test]
+    fn ascii_symbol_preset_reaches_the_tui() {
+        let mut config = Config::default();
+        config.symbols.preset = crate::config::SymbolPreset::Ascii;
+        let tui = Tui::new(&config);
+        assert_eq!(tui.symbols.visualizer_bars, " .:-=+*#");
+        assert_eq!(tui.symbols.spinner_activity[0], "=      ");
     }
 }

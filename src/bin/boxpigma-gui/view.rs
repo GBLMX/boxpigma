@@ -14,37 +14,39 @@ use boxpigma::{
 use iced::{
     Alignment, Border, Color, ContentFit, Element, Length, Theme,
     widget::{
-        Column, Row, button, column, container, image, qr_code, row, scrollable, slider, space,
-        text, text_input,
+        Column, Row, button, column, container, image, pane_grid, qr_code, row, scrollable, slider,
+        space, text, text_input,
     },
 };
 
-use crate::app::{Gui, Local, UiMessage, theme as ui_theme};
+use crate::app::{Gui, GuiPane, Local, UiMessage, theme as ui_theme};
 
 impl Gui {
     pub fn render<'a>(&'a self, view: &'a View) -> Element<'a, UiMessage> {
         let theme = ui_theme(view);
-        let body = column![
-            self.top_bar(view, &theme),
-            self.page(view, &theme),
-            self.player_bar(view, &theme),
-        ]
-        .spacing(8)
-        .height(Length::Fill);
-
-        container(
-            row![self.sidebar(view, &theme), body]
-                .spacing(8)
-                .height(Length::Fill),
-        )
-        .padding(10)
-        .width(Length::Fill)
-        .height(Length::Fill)
-        .style(|theme: &Theme| container::Style {
-            background: Some(theme.palette().background.into()),
-            ..container::Style::default()
+        let panes = pane_grid(&self.panes, |_pane, slot, _maximized| {
+            let content: Element<'a, UiMessage> = match slot {
+                GuiPane::Sidebar => self.sidebar(view, &theme),
+                GuiPane::Main => column![self.top_bar(view, &theme), self.page(view, &theme),]
+                    .spacing(8)
+                    .height(Length::Fill)
+                    .into(),
+                GuiPane::Player => self.player_bar(view, &theme),
+            };
+            pane_grid::Content::new(content)
         })
-        .into()
+        .spacing(8)
+        .on_resize(8, |event| UiMessage::Local(Local::PaneResized(event)));
+
+        container(panes)
+            .padding(10)
+            .width(Length::Fill)
+            .height(Length::Fill)
+            .style(|theme: &Theme| container::Style {
+                background: Some(theme.palette().background.into()),
+                ..container::Style::default()
+            })
+            .into()
     }
 
     fn sidebar<'a>(&'a self, view: &'a View, theme: &Theme) -> Element<'a, UiMessage> {

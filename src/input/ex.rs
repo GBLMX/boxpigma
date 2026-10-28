@@ -1332,6 +1332,8 @@ mod tests {
             candidate_names("", "s", &THEMES),
             vec![
                 "sign",
+                "simi",
+                "simiplaylist",
                 "spin",
                 "save",
                 "seek",

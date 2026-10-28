@@ -16,7 +16,10 @@
 //! The endpoint the listener sits on, and the streams the two sides talk over, are the
 //! `transport` module's business: a Unix domain socket under the cache directory.
 
-use std::sync::{Arc, Mutex};
+use std::{
+    sync::{Arc, Mutex},
+    time::Duration,
+};
 
 use color_eyre::eyre::{OptionExt, WrapErr};
 use serde::{Deserialize, Serialize};
@@ -145,6 +148,16 @@ pub enum IpcEvent {
     SwitchList {
         endpoint: String,
         playlist: Option<usize>,
+    },
+}
+
+/// Requests the actor-backed IPC server hands to the backend.
+#[derive(Clone, Debug)]
+pub enum BridgeRequest {
+    Control(IpcEvent),
+    Search {
+        keyword: String,
+        reply: mpsc::UnboundedSender<Vec<SearchEntry>>,
     },
 }
 
@@ -566,6 +579,105 @@ pub fn start_server(
     });
     log::info!("ipc: listening on {}", path.display());
     IpcServerGuard::new(true)
+}
+
+pub fn start_actor_server(
+    status_snapshot: Arc<Mutex<StatusSnapshot>>,
+    queue_snapshot: Arc<Mutex<QueueSnapshot>>,
+    status_tx: broadcast::Sender<StatusSnapshot>,
+    request_tx: mpsc::UnboundedSender<BridgeRequest>,
+) -> IpcServerGuard {
+    let Some(mut listener) = IpcListener::bind() else {
+        return IpcServerGuard::new(false);
+    };
+    let path = resolve_socket_path();
+    tokio::spawn(async move {
+        loop {
+            match listener.next().await {
+                Some(stream) => {
+                    let snapshot = Arc::clone(&status_snapshot);
+                    let queue = Arc::clone(&queue_snapshot);
+                    let status_tx = status_tx.clone();
+                    let request_tx = request_tx.clone();
+                    tokio::spawn(async move {
+                        handle_actor_connection(stream, snapshot, queue, status_tx, request_tx)
+                            .await;
+                    });
+                }
+                None => {
+                    log::error!("ipc: accept failed");
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+    });
+    log::info!("ipc: listening on {}", path.display());
+    IpcServerGuard::new(true)
+}
+
+async fn handle_actor_connection<S>(
+    stream: S,
+    snapshot: Arc<Mutex<StatusSnapshot>>,
+    queue: Arc<Mutex<QueueSnapshot>>,
+    status_tx: broadcast::Sender<StatusSnapshot>,
+    request_tx: mpsc::UnboundedSender<BridgeRequest>,
+) where
+    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin,
+{
+    let mut stream = BufReader::new(stream);
+    let mut line = String::new();
+    if stream.read_line(&mut line).await.is_err() {
+        return;
+    }
+    let request: IpcRequest = match serde_json::from_str(&line) {
+        Ok(request) => request,
+        Err(error) => {
+            log::debug!("ipc: invalid request: {error}");
+            return;
+        }
+    };
+    let mut stream = stream.into_inner();
+    match request {
+        IpcRequest::Status => {
+            let reply = serde_json::to_string(&*sync::mutex(&snapshot)).unwrap_or_default();
+            let _ = write_reply(&mut stream, &reply).await;
+        }
+        IpcRequest::List => {
+            let reply = serde_json::to_string(&*sync::mutex(&queue)).unwrap_or_default();
+            let _ = write_reply(&mut stream, &reply).await;
+        }
+        IpcRequest::Capabilities => {
+            let reply = serde_json::to_string(&capabilities()).unwrap_or_default();
+            let _ = write_reply(&mut stream, &reply).await;
+        }
+        IpcRequest::Msg { action } => {
+            if request_tx
+                .send(BridgeRequest::Control(action.into()))
+                .is_err()
+            {
+                log::error!("ipc: actor bridge dropped");
+            }
+            let _ = write_reply(&mut stream, r#"{"ok":true}"#).await;
+        }
+        IpcRequest::Search { keyword } => {
+            let (reply, mut receiver) = mpsc::unbounded_channel();
+            let results = if request_tx
+                .send(BridgeRequest::Search { keyword, reply })
+                .is_err()
+            {
+                Vec::new()
+            } else {
+                tokio::time::timeout(Duration::from_secs(10), receiver.recv())
+                    .await
+                    .ok()
+                    .flatten()
+                    .unwrap_or_default()
+            };
+            let reply = serde_json::to_string(&results).unwrap_or_default();
+            let _ = write_reply(&mut stream, &reply).await;
+        }
+        IpcRequest::Subscribe => stream_updates(stream, snapshot, status_tx).await,
+    }
 }
 
 async fn handle_connection<S>(

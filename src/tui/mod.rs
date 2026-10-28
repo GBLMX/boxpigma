@@ -17,7 +17,11 @@ use ratatui_image::{StatefulImage, picker::Picker, protocol::StatefulProtocol};
 
 use crate::{
     backend::{self, Backend, ContentSource, CoreMessage, Page, View},
-    config::Config,
+    config::{
+        Config, Pane, Symbols,
+        keymap::{Chord, Keymap},
+    },
+    layout::Divider,
     state::{LoginField, LoginMethod},
 };
 
@@ -36,7 +40,7 @@ pub fn run(config: Config) -> std::io::Result<()> {
     let tui = Tui::new(&config);
     ferriso_tui::run_with_app(
         move || {
-            Backend::new(config, true)
+            Backend::new_with_bridge(config, true)
                 .unwrap_or_else(|error| panic!("boxpigma: failed to build the backend: {error}"))
         },
         tui,
@@ -118,6 +122,14 @@ impl Default for Last {
     }
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct PaneDrag {
+    pub(crate) divider: Divider,
+    pub(crate) start_size: u16,
+    pub(crate) column: u16,
+    pub(crate) row: u16,
+}
+
 pub struct Tui {
     pub(crate) focus: Focus,
     pub(crate) content_selected: usize,
@@ -148,12 +160,20 @@ pub struct Tui {
     last: Last,
     pub(crate) areas: Areas,
     last_click: Option<(Instant, Hit)>,
+    pub(crate) pane_dividers: crate::layout::Dividers,
+    pub(crate) pane_preview: Option<(Pane, u16)>,
+    pub(crate) pane_drag: Option<PaneDrag>,
+    pub(crate) last_pane_click: Option<(Divider, Instant)>,
+    pub(crate) shell_area: Rect,
     pub(crate) picker: Option<Picker>,
     picker_attempted: bool,
     pub(crate) cover: Option<(u64, StatefulProtocol)>,
     pub(crate) qr: Option<Vec<String>>,
     seek_step: f64,
     mouse: bool,
+    keymap: Keymap,
+    pending_keys: Chord,
+    symbols: Symbols,
 }
 
 impl Tui {
@@ -187,6 +207,11 @@ impl Tui {
             last_tick: Instant::now(),
             last: Last::default(),
             areas: Areas::default(),
+            pane_dividers: crate::layout::Dividers::default(),
+            pane_preview: None,
+            pane_drag: None,
+            last_pane_click: None,
+            shell_area: Rect::default(),
             last_click: None,
             picker: None,
             picker_attempted: false,
@@ -194,6 +219,9 @@ impl Tui {
             qr: None,
             seek_step: f64::from(config.seek_interval_secs.max(1)),
             mouse: config.mouse,
+            keymap: Keymap::from_config(config),
+            pending_keys: Vec::new(),
+            symbols: Symbols::resolve(&config.symbols),
         }
     }
 

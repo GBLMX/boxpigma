@@ -10,8 +10,15 @@ use boxpigma::backend::{self, CoreMessage, View};
 use ferriso_gui::{Message as GuiMessage, Renderer};
 use iced::{
     Element, Subscription, Task, Theme, keyboard,
-    widget::{image, qr_code},
+    widget::{image, pane_grid, qr_code},
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum GuiPane {
+    Sidebar,
+    Main,
+    Player,
+}
 
 /// A message the window handles without waking the backend actor.
 #[derive(Clone, Debug)]
@@ -19,6 +26,7 @@ pub enum Local {
     Key(keyboard::Event),
     SeekPreview(f64),
     SeekCommit,
+    PaneResized(pane_grid::ResizeEvent),
 }
 
 pub type UiMessage = GuiMessage<View, CoreMessage, Local>;
@@ -30,6 +38,7 @@ pub struct Gui {
     cover: Option<(u64, Arc<Vec<u8>>, image::Handle)>,
     mv: Option<(u64, image::Handle)>,
     qr: Option<(String, qr_code::Data)>,
+    pub(crate) panes: pane_grid::State<GuiPane>,
 }
 
 impl Gui {
@@ -41,6 +50,17 @@ impl Gui {
             cover: None,
             mv: None,
             qr: None,
+            panes: pane_grid::State::with_configuration(pane_grid::Configuration::Split {
+                axis: pane_grid::Axis::Vertical,
+                ratio: 0.22,
+                a: Box::new(pane_grid::Configuration::Pane(GuiPane::Sidebar)),
+                b: Box::new(pane_grid::Configuration::Split {
+                    axis: pane_grid::Axis::Horizontal,
+                    ratio: 0.76,
+                    a: Box::new(pane_grid::Configuration::Pane(GuiPane::Main)),
+                    b: Box::new(pane_grid::Configuration::Pane(GuiPane::Player)),
+                }),
+            }),
         }
     }
 
@@ -159,6 +179,10 @@ impl Renderer<View, CoreMessage, Local> for Gui {
                 Task::done(UiMessage::User(CoreMessage::Seek(
                     (seconds / total).clamp(0.0, 1.0),
                 )))
+            }
+            Local::PaneResized(event) => {
+                self.panes.resize(event.split, event.ratio);
+                Task::none()
             }
         }
     }

@@ -9,6 +9,7 @@ use ncm_api::{ArtistAlbum, ArtistDetail, LoginInfo, MvInfo, SingerInfo, SongInfo
 use serde::{Deserialize, Serialize};
 
 use crate::{
+    config::{NavPosition, PanesConfig},
     playback::{LyricLine, PlayMode},
     state::{ContentState, LoginMethod, PaginationInfo},
 };
@@ -76,6 +77,7 @@ pub enum ContentSource {
     ArtistSongs(u64),
     SimilarSongs(u64),
     SimilarPlaylists(u64),
+    PersonalFm,
     Search(SearchKind, String),
 }
 
@@ -165,6 +167,7 @@ pub struct SettingsView {
     pub lyric_translation: bool,
     pub visualizer: bool,
     pub pitch: bool,
+    pub lyric_style: crate::config::LyricStyle,
 }
 
 /// Colours resolved for a native window; `None` means the theme used a
@@ -205,6 +208,8 @@ pub struct View {
     pub artist: Option<ArtistView>,
     pub player: PlayerView,
     pub search: SearchView,
+    pub panes: PanesConfig,
+    pub nav_position: NavPosition,
     pub login: LoginView,
     pub settings: SettingsView,
     pub theme: ThemeView,

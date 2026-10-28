@@ -199,9 +199,34 @@ fn track_path(song_id: u64) -> String {
 /*                                the interfaces                              */
 /* -------------------------------------------------------------------------- */
 
+#[derive(Clone)]
+enum EventTarget {
+    Legacy(mpsc::UnboundedSender<Event>),
+    Actor(mpsc::UnboundedSender<IpcEvent>),
+}
+
+impl EventTarget {
+    fn send(&self, event: IpcEvent) {
+        match self {
+            Self::Legacy(sender) => {
+                let _ = sender.send(AppEvent::Ipc(event).into());
+            }
+            Self::Actor(sender) => {
+                let _ = sender.send(event);
+            }
+        }
+    }
+
+    fn quit(&self) {
+        if let Self::Legacy(sender) = self {
+            let _ = sender.send(AppEvent::Quit.into());
+        }
+    }
+}
+
 /// `org.mpris.MediaPlayer2`: who the player is, and how to quit it.
 struct MediaPlayer2 {
-    events: mpsc::UnboundedSender<Event>,
+    target: EventTarget,
 }
 
 #[zbus::interface(name = "org.mpris.MediaPlayer2")]
@@ -209,7 +234,7 @@ impl MediaPlayer2 {
     /// Quit, through the same `AppEvent::Quit` the `q` key and SIGTERM take (session save
     /// and cookie flush included).
     fn quit(&self) {
-        let _ = self.events.send(AppEvent::Quit.into());
+        self.target.quit();
     }
 
     fn raise(&self) {}
@@ -253,7 +278,7 @@ impl MediaPlayer2 {
 /// `org.mpris.MediaPlayer2.Player`: transport, level, mode and metadata.
 struct Player {
     state: Arc<Mutex<State>>,
-    events: mpsc::UnboundedSender<Event>,
+    target: EventTarget,
     /// Told about a seek so the service task can emit `Seeked`: the interface methods have no
     /// connection of their own.
     seeked: mpsc::UnboundedSender<i64>,
@@ -262,7 +287,7 @@ struct Player {
 impl Player {
     /// Send a control request into the app loop — the same path the IPC socket uses.
     fn send(&self, event: IpcEvent) {
-        let _ = self.events.send(AppEvent::Ipc(event).into());
+        self.target.send(event);
     }
 
     /// The snapshot the properties read from; a poisoned lock is not worth taking the media
@@ -458,8 +483,18 @@ impl MprisService {
     /// requests the name with `ReplaceExisting`, so the newest instance takes the session over and
     /// the older one is told it lost the name (see SKILLS.md).
     pub async fn run(self, events: mpsc::UnboundedSender<Event>) {
+        self.run_target(EventTarget::Legacy(events)).await;
+    }
+
+    /// Serve the actor frontend: controls land in the same `IpcEvent` queue the IPC
+    /// socket does, without borrowing the legacy app loop.
+    pub async fn run_actor(self, events: mpsc::UnboundedSender<IpcEvent>) {
+        self.run_target(EventTarget::Actor(events)).await;
+    }
+
+    async fn run_target(self, target: EventTarget) {
         let (seeked_tx, mut seeked_rx) = mpsc::unbounded_channel();
-        let connection = match serve(Arc::clone(&self.state), events, seeked_tx).await {
+        let connection = match serve(Arc::clone(&self.state), target, seeked_tx).await {
             Ok(connection) => connection,
             Err(error) => {
                 log::warn!("MPRIS 媒体会话不可用（{error}）：桌面媒体键与 playerctl 无法控制播放");
@@ -519,7 +554,7 @@ impl MprisService {
 /// `Seeked` signal needs.
 async fn serve(
     state: Arc<Mutex<State>>,
-    events: mpsc::UnboundedSender<Event>,
+    target: EventTarget,
     seeked: mpsc::UnboundedSender<i64>,
 ) -> zbus::Result<Connection> {
     zbus::connection::Builder::session()?
@@ -527,14 +562,14 @@ async fn serve(
         .serve_at(
             PATH,
             MediaPlayer2 {
-                events: events.clone(),
+                target: target.clone(),
             },
         )?
         .serve_at(
             PATH,
             Player {
                 state,
-                events,
+                target,
                 seeked,
             },
         )?

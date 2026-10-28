@@ -111,7 +111,7 @@ boxpigma 把网易云音乐与本地音频播放带进终端：流式播放、�
 - 播放条带封面（`ratatui-image`，失败时半块字符画）、频谱、音高读数、时长与音量
 - 主题来自 `config.toml` 的 `[theme]` / 内置主题；`:` 命令与设置页可切换并自动保存
 - 设置页把常用开关、主题、音质、音量收进一张表；改动即时生效并写回 `config.toml`
-- `:` 命令行（无 Tab 补全）；固定键位与鼠标点击 / 双击 / 滚轮 / 进度条 seek / 音量区调音量
+- `:` 命令行（无 Tab 补全）；键位可由 `[keys]` 重绑；鼠标点击 / 双击 / 滚轮 / 进度条 seek / 音量区调音量
 - 桌面通知（切歌 / 出错；`notify-send`）
 
 **终端**
@@ -124,7 +124,7 @@ boxpigma 把网易云音乐与本地音频播放带进终端：流式播放、�
 **集成与打包**
 
 - 命令行控制（`status` / `msg`）+ JSON IPC（waybar 等）· 守护进程模式（`boxpigma -d`）
-- 桌面媒体会话（MPRIS，`org.mpris.MediaPlayer2.boxpigma`）：`playerctl`、KDE / GNOME 媒体控件、键盘与蓝牙耳机媒体键可直接控制播放，属性里带封面 `mpris:artUrl`；当前由守护进程提供（actor TUI 的桥接尚未接入）
+- 桌面媒体会话（MPRIS，`org.mpris.MediaPlayer2.boxpigma`）：`playerctl`、KDE / GNOME 媒体控件、键盘与蓝牙耳机媒体键可直接控制播放，属性里带封面 `mpris:artUrl`；actor TUI 与守护进程均提供，GUI 尚未接入
 - 系统包管理器安装（yay / paru）· shell 补全（bash / zsh / fish / elvish / powershell）
 
 **开发**
@@ -303,7 +303,7 @@ cargo build --release
 | `v` / `V` / `y` / `w` | 频谱 / 音高 / 歌词译文 / 清空队列 |
 | 鼠标 | 点击导航与列表；双击播放；滚轮移动选择；点击进度条 seek、点击音量区调音量 |
 
-交互式 TUI 的键位固定；`config.toml` 的 `[keys]` 目前只由 `boxpigma -d` 的守护进程使用。
+交互式 TUI 与守护进程都读取 `config.toml` 的 `[keys]` 重绑；actor TUI 的默认键来自命令表。
 
 ### 终端界面（actor TUI）
 
@@ -323,8 +323,7 @@ Tokio runtime、actor 启停和终端生命周期由 `ferriso-tui` 管理，GUI 
 - 队列页可切队列、点歌、清空；歌词页跟随播放位置，支持译文；登录页有二维码、密码、短信和签到
 - 封面走 `ratatui-image`（查询失败时回落半块字符画）；二维码在终端内绘制；切歌/错误提示在顶栏显示数秒
 - 鼠标命中区随帧重建，点击导航、列表、播放按钮、进度条和音量区
-- **范围说明**：`boxpigma -d` 的守护进程仍使用旧 `App` 启动 IPC / MPRIS；交互式 actor TUI
-  暂未提供 Unix socket 控制接口
+- **范围说明**：`boxpigma -d` 仍使用旧 `App`；交互式 actor TUI 已桥接 IPC / MPRIS，GUI 尚未桥接
 
 ### 桌面界面（`boxpigma-gui`）
 
@@ -365,10 +364,13 @@ cargo build --release --bin boxpigma-gui
 | `:help` | 快捷键面板 |
 | `:login` / `:logout` / `:sign` | 登录页 / 退出登录 / 每日签到 |
 | `:browse` / `:main` | 回到浏览页 |
-| `:queue` / `:lyrics` / `:settings` | 打开播放队列 / 歌词 / 设置 |
+| `:queue` / `:settings` | 打开播放队列 / 设置 |
+| `:lyrics [window\|one_line\|ktv\|flow\|plain]` | 切换歌词样式；`:lyrics-page` 打开歌词页 |
+| `:fm` / `:fmtrash` | 拉取私人 FM 并开播首曲 / 从私人 FM 移除当前歌曲 |
+| `:simi` / `:simiplaylist` | 相似歌曲 / 包含当前歌曲的歌单 |
 | `:theme [名字]` | 不带参数循环主题；带名字切到指定主题 |
 | `:quality [等级]` | 不带参数循环音质；带等级切到 `standard` / `higher` / `exhigh` / `lossless` 等 |
-| `:volume 75` | 绝对音量（0-100） |
+| `:volume 75` / `:volume +5` / `:volume -10` | 绝对音量（0-100）或相对调整 |
 | `:seek 90` / `:seek +15` / `:seek -30` / `:seek 50%` | 跳到某秒 / 相对跳转 / 百分比 |
 | `:clear` | 清空当前播放队列 |
 | `:play` / `:pause` | 播放 / 暂停（切换） |
@@ -381,11 +383,13 @@ cargo build --release --bin boxpigma-gui
 | `:notify song` / `:notify errors` | 切歌 / 错误通知开关 |
 | `:search [关键词]` | 不带关键词进入搜索框；带关键词直接搜索 |
 | `:save` | 配置在每次更改时已自动保存，这条只回报状态 |
+| `:signin <账号> <密码>` / `:sms <手机号>` / `:smslogin <手机号> <验证码>` | 直接登录 |
+| `:pane <面板> [on\|off\|toggle]` / `:navpos` | 面板开关 / 切换导航栏位置 |
 
 ### CLI 控制（status / msg）
 
-查询/控制一个**正在运行**的 boxpigma 守护进程（`boxpigma -d`），
-通过 `~/.cache/boxpigma/boxpigma.sock` 上的 Unix socket 通信（actor TUI 的 socket 桥接尚未接入）：
+查询/控制一个**正在运行**的 boxpigma（交互式 actor TUI 或 `boxpigma -d` 守护进程），
+通过 `~/.cache/boxpigma/boxpigma.sock` 上的 Unix socket 通信：
 
 ```bash
 # 生成 shell 补全脚本（bash / zsh / fish / elvish / powershell）
@@ -418,7 +422,7 @@ Add-Content $PROFILE '. "$HOME/.config/powershell/boxpigma.ps1"'
 | `boxpigma msg mode` | 切换播放模式 |
 | `boxpigma msg like` / `boxpigma msg dislike` | 喜欢 / 不喜欢 |
 | `boxpigma msg toggle_like` | 喜欢/取消喜欢（切换当前曲目） |
-| `boxpigma msg switch-list <endpoint>` | 动态切换守护进程的队列到指定端点（如 `recommend_songs`、`toplist`），歌单端点可用 `--playlist N` 选第 N 个 |
+| `boxpigma msg switch-list <endpoint>` | 动态切换运行中实例的队列到指定端点（如 `recommend_songs`、`toplist`），歌单端点可用 `--playlist N` 选第 N 个 |
 | `boxpigma msg volume 75` | 绝对音量（0-100） |
 | `boxpigma msg volume +5` / `-10` | 相对 ±%（与 TUI 的 `+` / `-` 一致，支持负数） |
 | `boxpigma msg seek +15` | 向后跳 15 秒（`-30` 向前；与 TUI 的 `:seek` 同一套语法与校验） |
@@ -468,7 +472,7 @@ printf '{"cmd":"msg","action":{"action":"switch_list","endpoint":"toplist","play
 
 以无终端方式后台运行（可挂在 waybar / systemd 下），加载指定的 API 作为初始队列（**不自动播放**，用 `boxpigma msg play` 或 waybar 的 toggle 按钮开始）。
 
-守护进程同样提供桌面媒体会话（MPRIS）：`playerctl -p boxpigma play-pause`、桌面媒体控件与媒体键都能控制它，状态与 `boxpigma status --json` 同源。
+守护进程与交互式 actor TUI 都提供桌面媒体会话（MPRIS）：`playerctl -p boxpigma play-pause`、桌面媒体控件与媒体键都能控制它，状态与 `boxpigma status --json` 同源。
 
 | 选项 | 说明 |
 |---|---|

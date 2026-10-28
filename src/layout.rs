@@ -187,6 +187,42 @@ pub struct LayoutAreas {
     pub dividers: Dividers,
 }
 
+/// The actor TUI's shell: the same pane geometry as [`main`], but the content
+/// owns the old breadcrumb rows because this frontend draws no breadcrumb.
+pub struct ShellLayout {
+    pub topbar: Rect,
+    pub sidebar: Rect,
+    pub nav: Rect,
+    pub content: Rect,
+    pub playerbar: Rect,
+    pub dividers: Dividers,
+}
+
+pub fn shell(area: Rect, panes: &PanesConfig, nav_position: NavPosition) -> ShellLayout {
+    let layout = main(area, panes, nav_position);
+    let content = if layout.breadcrumb.is_empty() {
+        layout.content
+    } else {
+        Rect {
+            x: layout.content.x,
+            y: layout.breadcrumb.y,
+            width: layout.content.width,
+            height: layout
+                .breadcrumb
+                .height
+                .saturating_add(layout.content.height),
+        }
+    };
+    ShellLayout {
+        topbar: layout.topbar,
+        sidebar: layout.sidebar,
+        nav: layout.nav,
+        content,
+        playerbar: layout.playerbar,
+        dividers: layout.dividers,
+    }
+}
+
 /// The main page: topbar, navigation, content and player bar.
 ///
 /// Every size comes from [`PanesConfig`] and a collapsed pane is dropped to zero, so the content

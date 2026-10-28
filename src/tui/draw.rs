@@ -22,9 +22,6 @@ use super::{
     Focus, Hit, SETTINGS, Tui, artist_count, ensure_visible, field_value, login_fields, palette,
 };
 
-const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
-const SPECTRUM: [char; 8] = ['▁', '▂', '▃', '▄', '▅', '▆', '▇', '█'];
-
 pub(super) fn draw(tui: &mut Tui, view: &View, frame: &mut Frame) {
     let palette = palette(view);
     let area = frame.area();
@@ -33,20 +30,32 @@ pub(super) fn draw(tui: &mut Tui, view: &View, frame: &mut Frame) {
         Fill::new(" ").style(Style::default().bg(palette.background)),
         area,
     );
+    let footer = Rect {
+        y: area.y + area.height.saturating_sub(1),
+        height: u16::from(area.height > 0),
+        ..area
+    };
+    let shell_area = Rect {
+        height: area.height.saturating_sub(footer.height),
+        ..area
+    };
 
-    let player_height = if area.height >= 24 { 7 } else { 6 };
-    let rows = Layout::vertical([
-        Constraint::Length(3),
-        Constraint::Min(4),
-        Constraint::Length(player_height),
-        Constraint::Length(1),
-    ])
-    .split(area);
+    let mut panes = view.panes.clone();
+    if let Some((pane, size)) = tui.pane_preview {
+        panes.set_size(pane, size);
+    }
+    let shell = crate::layout::shell(shell_area, &panes, view.nav_position);
+    tui.shell_area = shell_area;
+    tui.pane_dividers = shell.dividers;
 
-    draw_top(tui, view, &palette, rows[0], frame);
-    draw_main(tui, view, &palette, rows[1], frame);
-    draw_player(tui, view, &palette, rows[2], frame);
-    draw_footer(tui, view, &palette, rows[3], frame);
+    if !shell.topbar.is_empty() {
+        draw_top(tui, view, &palette, shell.topbar, frame);
+    }
+    draw_main(tui, view, &palette, &shell, frame);
+    if !shell.playerbar.is_empty() {
+        draw_player(tui, view, &palette, shell.playerbar, frame);
+    }
+    draw_footer(tui, view, &palette, footer, frame);
 
     if tui.help {
         draw_help(&palette, area, frame);
@@ -70,7 +79,12 @@ fn draw_top(tui: &mut Tui, view: &View, p: &super::theme::Palette, area: Rect, f
     }
     if view.loading {
         title.spans.push(Span::styled(
-            format!("  {} 加载中…", SPINNER[(tui.tick as usize) % SPINNER.len()]),
+            format!(
+                "  {} 加载中…",
+                tui.symbols.spinner_activity[(tui.tick as usize
+                    / tui.symbols.spinner_ticks_per_frame.max(1) as usize)
+                    % tui.symbols.spinner_activity.len()]
+            ),
             Style::default().fg(p.warning),
         ));
     }
@@ -159,14 +173,22 @@ fn draw_top(tui: &mut Tui, view: &View, p: &super::theme::Palette, area: Rect, f
     );
 }
 
-fn draw_main(tui: &mut Tui, view: &View, p: &super::theme::Palette, area: Rect, frame: &mut Frame) {
-    if area.width < 84 {
-        draw_content(tui, view, p, area, frame);
-        return;
+fn draw_main(
+    tui: &mut Tui,
+    view: &View,
+    p: &super::theme::Palette,
+    shell: &crate::layout::ShellLayout,
+    frame: &mut Frame,
+) {
+    let nav = if shell.sidebar.is_empty() {
+        shell.nav
+    } else {
+        shell.sidebar
+    };
+    if !nav.is_empty() {
+        draw_nav(tui, view, p, nav, frame);
     }
-    let columns = Layout::horizontal([Constraint::Length(26), Constraint::Min(20)]).split(area);
-    draw_nav(tui, view, p, columns[0], frame);
-    draw_content(tui, view, p, columns[1], frame);
+    draw_content(tui, view, p, shell.content, frame);
 }
 
 fn draw_nav(tui: &mut Tui, view: &View, p: &super::theme::Palette, area: Rect, frame: &mut Frame) {
@@ -202,7 +224,14 @@ fn draw_nav(tui: &mut Tui, view: &View, p: &super::theme::Palette, area: Rect, f
                 selected_nav = nav_rows.len();
             }
             nav_rows.push(Row {
-                text: format!("  {}", item.name),
+                text: if selected {
+                    format!(
+                        "{}{}{}",
+                        tui.symbols.nav_capsule_left, item.name, tui.symbols.nav_capsule_right
+                    )
+                } else {
+                    format!("  {}", item.name)
+                },
                 style: if selected {
                     if tui.focus == Focus::Nav {
                         p.selected()
@@ -695,7 +724,7 @@ fn draw_queue(
 }
 
 fn draw_lyrics(
-    _tui: &mut Tui,
+    tui: &mut Tui,
     view: &View,
     p: &super::theme::Palette,
     area: Rect,
@@ -711,14 +740,29 @@ fn draw_lyrics(
         return;
     }
     let current = current_lyric_index(&view.player.lyrics, view.player.position_secs);
+    let style = view.settings.lyric_style;
+    let current_style = match style {
+        crate::config::LyricStyle::Plain => Style::default().fg(p.text),
+        crate::config::LyricStyle::Ktv => Style::default()
+            .fg(p.accent)
+            .add_modifier(Modifier::BOLD | Modifier::REVERSED),
+        crate::config::LyricStyle::Flow => Style::default()
+            .fg(p.accent)
+            .add_modifier(Modifier::BOLD | Modifier::ITALIC),
+        crate::config::LyricStyle::Window | crate::config::LyricStyle::OneLine => {
+            Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+        }
+    };
     let mut lines: Vec<Line> = Vec::new();
     let mut current_line = 0usize;
     for (index, lyric) in view.player.lyrics.iter().enumerate() {
         if Some(index) == current {
             current_line = lines.len();
         }
-        let style = if Some(index) == current {
-            Style::default().fg(p.accent).add_modifier(Modifier::BOLD)
+        let line_style = if Some(index) == current {
+            current_style
+        } else if style == crate::config::LyricStyle::Plain {
+            Style::default().fg(p.text)
         } else if current.is_some_and(|current| index < current) {
             Style::default().fg(p.muted)
         } else {
@@ -726,13 +770,13 @@ fn draw_lyrics(
         };
         lines.push(Line::from(Span::styled(
             format!("  {} ", lyric.text),
-            style,
+            line_style,
         )));
         if let Some(translated) = translation_at(&view.player.translated_lyrics, lyric)
             && view.settings.lyric_translation
         {
             lines.push(Line::from(Span::styled(
-                format!("  > {translated}"),
+                format!("  {} {translated}", tui.symbols.translation),
                 if Some(index) == current {
                     Style::default().fg(p.warning)
                 } else {
@@ -742,6 +786,34 @@ fn draw_lyrics(
         }
     }
     let visible = area.height as usize;
+    if style == crate::config::LyricStyle::OneLine {
+        let start = current_line;
+        let count = if view.settings.lyric_translation
+            && current
+                .and_then(|index| view.player.lyrics.get(index))
+                .and_then(|lyric| translation_at(&view.player.translated_lyrics, lyric))
+                .is_some()
+        {
+            2
+        } else {
+            1
+        };
+        let picked = lines
+            .into_iter()
+            .skip(start)
+            .take(count)
+            .collect::<Vec<_>>();
+        let mut centred = vec![Line::default(); visible.saturating_sub(picked.len()) / 2];
+        centred.extend(picked);
+        frame.render_widget(
+            Paragraph::new(centred)
+                .style(p.panel())
+                .alignment(Alignment::Center)
+                .wrap(Wrap { trim: false }),
+            area,
+        );
+        return;
+    }
     let start = current_line.saturating_sub(visible / 2);
     let lyrics = lines
         .into_iter()
@@ -1097,7 +1169,14 @@ fn draw_player(
     );
 
     if info_area.width >= 14 {
-        let volume = format!("音量 {:>3.0}%", view.player.volume * 100.0);
+        let icon = if view.player.volume < 0.34 {
+            &tui.symbols.volume_low
+        } else if view.player.volume < 0.67 {
+            &tui.symbols.volume_mid
+        } else {
+            &tui.symbols.volume_high
+        };
+        let volume = format!("{icon} 音量 {:>3.0}%", view.player.volume * 100.0);
         let volume_area = Rect {
             x: info_area.right().saturating_sub(13),
             y: info_area.y + 1,
@@ -1165,9 +1244,9 @@ fn draw_player(
             .iter()
             .take(width)
             .map(|value| {
-                let index =
-                    ((*value).clamp(0.0, 1.0) * (SPECTRUM.len() - 1) as f32).round() as usize;
-                SPECTRUM[index]
+                let bars: Vec<char> = tui.symbols.visualizer_bars.chars().collect();
+                let index = ((*value).clamp(0.0, 1.0) * (bars.len() - 1) as f32).round() as usize;
+                bars[index]
             })
             .collect::<String>();
         frame.render_widget(
@@ -1355,7 +1434,12 @@ fn draw_empty(
 ) {
     let text = match content {
         ContentState::Loading => {
-            format!("{} 正在加载…", SPINNER[(tui.tick as usize) % SPINNER.len()])
+            format!(
+                "{} 正在加载…",
+                tui.symbols.spinner_activity[(tui.tick as usize
+                    / tui.symbols.spinner_ticks_per_frame.max(1) as usize)
+                    % tui.symbols.spinner_activity.len()]
+            )
         }
         ContentState::Error(error) => format!("{error}\n\nr 重试"),
         _ => "这里还没有内容".to_string(),

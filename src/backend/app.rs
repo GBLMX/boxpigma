@@ -3,7 +3,7 @@
 //! and send [`Message`]s; no frontend calls the API or the engine directly.
 
 use std::{
-    collections::HashSet,
+    collections::{HashMap, HashSet},
     path::{Path, PathBuf},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
@@ -18,14 +18,22 @@ use super::view::{
 };
 use crate::{
     cache::CacheManager,
-    config::{Config, ThemeRegistry, theme_fallback},
+    config::{Config, Pane, ThemeRegistry, theme_fallback},
     event::{AppEvent, Event, EventHandler, PlaybackEvent},
-    playback::{LyricLine, NCM_SEARCH_QUEUE_KEY, PlaybackEngine, parse_lyric_lines},
+    ipc::{
+        BridgeRequest, IpcEvent, IpcServerGuard, QueueEntry, QueueSnapshot, SearchEntry,
+        StatusSnapshot, start_actor_server,
+    },
+    mpris::MprisHandle,
+    playback::{
+        LyricLine, NCM_SEARCH_QUEUE_KEY, PlaybackEngine, SeekTarget, parse_lyric_lines, parse_seek,
+    },
     service::{ApiEndpoint, ApiService},
     state::{ContentState, LoginField, LoginMethod, PaginationInfo},
-    utils::{boxpigma_cache_dir, boxpigma_config_dir, path::expand_tilde},
+    utils::{Named, boxpigma_cache_dir, boxpigma_config_dir, path::expand_tilde},
 };
 use ferriso_core::{App, Command, Subscription};
+use tokio::sync::{Mutex as AsyncMutex, broadcast, mpsc};
 
 const TICK: Duration = Duration::from_millis(100);
 const LISTEN_THRESHOLD: Duration = Duration::from_secs(30);
@@ -54,6 +62,8 @@ pub enum Message {
     OpenArtistAlbum(usize),
     OpenSimilarArtist(usize),
     OpenSongContext(bool),
+    OpenPersonalFm,
+    TrashFm,
     PlayQueueRow(usize),
     SwitchQueue(bool),
     ActivateQueue(String),
@@ -75,6 +85,9 @@ pub enum Message {
     BackspaceLoginField(LoginField),
     ClearLoginField(LoginField),
     SendSmsCode,
+    SignIn { account: String, password: String },
+    SendSms { phone: String },
+    SmsLogin { phone: String, code: String },
     SubmitLogin,
     StartQr,
     RefreshQr,
@@ -87,6 +100,11 @@ pub enum Message {
     ToggleTranslation,
     ToggleVisualizer,
     TogglePitch,
+    SetPaneSize(Pane, u16),
+    CycleLyricStyle,
+    SetLyricStyle(String),
+    CycleNavPosition,
+    TogglePane(Pane),
     CycleTheme,
     SetTheme(String),
     SetQuality(String),
@@ -147,8 +165,104 @@ pub enum Internal {
         songs: Vec<Arc<SongInfo>>,
         playlist_id: u64,
     },
+    SwitchListLoaded {
+        key: String,
+        result: Result<Vec<Arc<SongInfo>>, String>,
+    },
+    Bridge(BridgeRequest),
+    PersonalFmLoaded {
+        generation: u64,
+        result: Result<Vec<Arc<SongInfo>>, String>,
+    },
     Tick,
     Noop,
+}
+
+struct Bridge {
+    requests: Arc<AsyncMutex<mpsc::UnboundedReceiver<BridgeRequest>>>,
+    status: Arc<Mutex<StatusSnapshot>>,
+    queue: Arc<Mutex<QueueSnapshot>>,
+    status_tx: broadcast::Sender<StatusSnapshot>,
+    mpris: MprisHandle,
+    _guard: IpcServerGuard,
+}
+
+impl Bridge {
+    fn start() -> Option<Self> {
+        if tokio::runtime::Handle::try_current().is_err() {
+            return None;
+        }
+        let status = Arc::new(Mutex::new(StatusSnapshot::default()));
+        let queue = Arc::new(Mutex::new(QueueSnapshot::default()));
+        let (status_tx, _) = broadcast::channel(16);
+        let (request_tx, requests) = mpsc::unbounded_channel();
+        let guard = start_actor_server(
+            Arc::clone(&status),
+            Arc::clone(&queue),
+            status_tx.clone(),
+            request_tx.clone(),
+        );
+        let (mpris, service) = MprisHandle::new();
+        let (mpris_tx, mut mpris_rx) = mpsc::unbounded_channel::<IpcEvent>();
+        tokio::spawn(service.run_actor(mpris_tx));
+        tokio::spawn(async move {
+            while let Some(event) = mpris_rx.recv().await {
+                if request_tx.send(BridgeRequest::Control(event)).is_err() {
+                    break;
+                }
+            }
+        });
+        Some(Self {
+            requests: Arc::new(AsyncMutex::new(requests)),
+            status,
+            queue,
+            status_tx,
+            mpris,
+            _guard: guard,
+        })
+    }
+
+    fn publish(&self, view: &View, cache: &CacheManager) {
+        let song = view.player.song.as_ref();
+        let snapshot = StatusSnapshot {
+            id: song.map(|song| song.id).unwrap_or(0),
+            name: song.map(|song| song.name.clone()).unwrap_or_default(),
+            artist: song.map(|song| song.singer.clone()).unwrap_or_default(),
+            album: song.map(|song| song.album.clone()).unwrap_or_default(),
+            duration_ms: song.map(|song| song.duration).unwrap_or(0),
+            position_ms: (view.player.position_secs * 1000.0) as u64,
+            volume: view.player.volume,
+            playing: view.player.playing,
+            paused: view.player.paused,
+            mode: match view.player.mode {
+                crate::playback::PlayMode::Sequential => "sequential",
+                crate::playback::PlayMode::RepeatOne => "repeat_one",
+                crate::playback::PlayMode::RepeatAll => "repeat_all",
+                crate::playback::PlayMode::Shuffle => "shuffle",
+                crate::playback::PlayMode::Heartbeat { .. } => "heartbeat",
+            }
+            .to_string(),
+            liked: view.player.liked,
+        };
+        if let Ok(mut stored) = self.status.lock() {
+            *stored = snapshot.clone();
+        }
+        if let Ok(mut stored) = self.queue.lock() {
+            *stored = QueueSnapshot {
+                key: view.player.queue_key.clone(),
+                current_index: view.player.queue_index,
+                songs: view
+                    .player
+                    .queue
+                    .iter()
+                    .map(|song| QueueEntry::from_song(song))
+                    .collect(),
+            };
+        }
+        let _ = self.status_tx.send(snapshot.clone());
+        self.mpris
+            .update(&snapshot, view.player.mode, cache.cached_cover(snapshot.id));
+    }
 }
 
 struct HistoryEntry {
@@ -172,6 +286,7 @@ pub struct Backend {
     engine: PlaybackEngine,
     events: EventHandler,
     liked_ids: Arc<Mutex<HashSet<u64>>>,
+    search_results: Arc<Mutex<HashMap<u64, Arc<SongInfo>>>>,
     theme_registry: ThemeRegistry,
 
     page: Page,
@@ -215,12 +330,22 @@ pub struct Backend {
     qr_poll_due: Option<Instant>,
     qr_in_flight: bool,
     qr_scanned: bool,
+    bridge: Option<Bridge>,
 }
 
 impl Backend {
     /// Build the backend. `persist` decides whether settings changes are written
     /// to the user's config file; tests pass `false`.
     pub fn new(config: Config, persist: bool) -> color_eyre::Result<Self> {
+        Self::build(config, persist, false)
+    }
+
+    /// Build the interactive backend and bridge IPC/MPRIS to its snapshots.
+    pub fn new_with_bridge(config: Config, persist: bool) -> color_eyre::Result<Self> {
+        Self::build(config, persist, true)
+    }
+
+    fn build(config: Config, persist: bool, bridge: bool) -> color_eyre::Result<Self> {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let mut config = config;
         config.persist = persist;
@@ -255,6 +380,7 @@ impl Backend {
         let http = http_client(&proxy, Some(Duration::from_secs(30)));
         let events = EventHandler::new(false);
         let liked_ids: Arc<Mutex<HashSet<u64>>> = Arc::new(Mutex::new(HashSet::new()));
+        let search_results = Arc::new(Mutex::new(HashMap::new()));
         let engine = PlaybackEngine::new(
             events.sender(),
             service.clone(),
@@ -304,6 +430,7 @@ impl Backend {
             engine,
             events,
             liked_ids,
+            search_results,
             theme_registry,
             page: Page::Browse,
             nav_sections,
@@ -351,6 +478,7 @@ impl Backend {
             qr_poll_due: None,
             qr_in_flight: false,
             qr_scanned: false,
+            bridge: if bridge { Bridge::start() } else { None },
         })
     }
 
@@ -543,6 +671,20 @@ impl Backend {
         }
         self.begin_load(source.clone());
         self.reload_source(source, false)
+    }
+
+    fn open_personal_fm(&mut self) -> Command<Message> {
+        self.push_history();
+        self.page = Page::Browse;
+        self.artist = None;
+        self.title = "私人FM".into();
+        self.subtitle = Some("根据你的口味推荐".into());
+        self.begin_load(ContentSource::PersonalFm);
+        let generation = self.content_generation;
+        let service = self.service.clone();
+        Command::perform(async move { service.personal_fm().await }, move |result| {
+            Message::Internal(Internal::PersonalFmLoaded { generation, result })
+        })
     }
 
     fn open_artist(&mut self, artist_id: u64) -> Command<Message> {
@@ -878,6 +1020,50 @@ impl Backend {
                     .map_err(|error| error.to_string())
             },
             |result| Message::Internal(Internal::SmsSent(result)),
+        )
+    }
+
+    fn sign_in(&mut self, account: String, password: String) -> Command<Message> {
+        self.page = Page::Login;
+        self.login_method = LoginMethod::Password;
+        self.login_account = account;
+        self.login_password = password;
+        self.submit_login()
+    }
+
+    fn send_sms_to(&mut self, phone: String) -> Command<Message> {
+        self.page = Page::Login;
+        self.login_method = LoginMethod::Sms;
+        self.login_phone = phone;
+        self.send_sms_code()
+    }
+
+    fn sms_login(&mut self, phone: String, code: String) -> Command<Message> {
+        self.page = Page::Login;
+        self.login_method = LoginMethod::Sms;
+        self.login_phone = phone;
+        self.login_code = code;
+        self.submit_login()
+    }
+
+    fn trash_current_fm_song(&mut self) -> Command<Message> {
+        let Some(song) = self.engine.current_song() else {
+            self.banner = Banner {
+                text: "没有正在播放的歌曲".into(),
+                error: true,
+            };
+            return Command::none();
+        };
+        let service = self.service.clone();
+        let song_id = song.id;
+        let name = song.name.clone();
+        Command::perform(
+            async move { service.fm_trash(song_id).await },
+            move |result| {
+                Message::Internal(Internal::ActionResult(
+                    result.map(|()| format!("已从私人FM移除：{name}")),
+                ))
+            },
         )
     }
 
@@ -1263,7 +1449,7 @@ impl App for Backend {
 
     fn init(&mut self) -> Command<Message> {
         let service = self.service.clone();
-        Command::perform(
+        let login = Command::perform(
             async move {
                 service
                     .login_status()
@@ -1272,7 +1458,8 @@ impl App for Backend {
                     .filter(|user| user.uid != 0)
             },
             |user| Message::Internal(Internal::UserLoaded(user)),
-        )
+        );
+        Command::batch([login, self.next_bridge()])
     }
 
     fn update(&mut self, message: Message) -> Command<Message> {
@@ -1457,6 +1644,8 @@ impl App for Backend {
                 };
                 self.open_detail(source, title, "")
             }
+            Message::OpenPersonalFm => self.open_personal_fm(),
+            Message::TrashFm => self.trash_current_fm_song(),
             Message::PlayQueueRow(index) => {
                 self.engine.play_index(index);
                 Command::none()
@@ -1551,6 +1740,9 @@ impl App for Backend {
                 Command::none()
             }
             Message::SendSmsCode => self.send_sms_code(),
+            Message::SignIn { account, password } => self.sign_in(account, password),
+            Message::SendSms { phone } => self.send_sms_to(phone),
+            Message::SmsLogin { phone, code } => self.sms_login(phone, code),
             Message::SubmitLogin => self.submit_login(),
             Message::StartQr | Message::RefreshQr => self.start_qr(),
             Message::DailySign => self.daily_sign(),
@@ -1596,6 +1788,53 @@ impl App for Backend {
             }
             Message::TogglePitch => {
                 self.config.playerbar.visible.pitch = !self.config.playerbar.visible.pitch;
+                self.config.save();
+                Command::none()
+            }
+            Message::CycleLyricStyle => {
+                self.config.lyric_style = self.config.lyric_style.next();
+                self.config.save();
+                self.banner = Banner {
+                    text: format!("歌词样式：{}", self.config.lyric_style.name()),
+                    error: false,
+                };
+                Command::none()
+            }
+            Message::SetLyricStyle(name) => {
+                match crate::config::LyricStyle::parse(&name) {
+                    Some(style) => {
+                        self.config.lyric_style = style;
+                        self.config.save();
+                        self.banner = Banner {
+                            text: format!("歌词样式：{}", style.name()),
+                            error: false,
+                        };
+                    }
+                    None => {
+                        self.banner = Banner {
+                            text: format!("未知歌词样式：{name}"),
+                            error: true,
+                        };
+                    }
+                }
+                Command::none()
+            }
+            Message::CycleNavPosition => {
+                self.config.navigation_position = self.config.navigation_position.cycle();
+                self.config.save();
+                self.banner = Banner {
+                    text: format!("导航栏位置：{}", self.config.navigation_position.label()),
+                    error: false,
+                };
+                Command::none()
+            }
+            Message::SetPaneSize(pane, size) => {
+                self.config.panes.set_size(pane, size);
+                self.config.save();
+                Command::none()
+            }
+            Message::TogglePane(pane) => {
+                self.config.panes.toggle(pane);
                 self.config.save();
                 Command::none()
             }
@@ -1688,7 +1927,7 @@ impl App for Backend {
             queue_key: self.engine.queue_key().to_string(),
             queue_index: self.engine.queue_current_index(),
         };
-        View {
+        let view = View {
             page: self.page,
             nav: NavView {
                 sections: self.nav_sections.clone(),
@@ -1707,6 +1946,8 @@ impl App for Backend {
             artist: self.artist.clone(),
             player,
             search: self.search.clone(),
+            panes: self.config.panes.clone(),
+            nav_position: self.config.navigation_position,
             login: LoginView {
                 method: self.login_method,
                 account: self.login_account.clone(),
@@ -1734,9 +1975,14 @@ impl App for Backend {
                 lyric_translation: self.config.lyric_translation,
                 visualizer: self.config.playerbar.visible.visualizer,
                 pitch: self.config.playerbar.visible.pitch,
+                lyric_style: self.config.lyric_style,
             },
             theme: self.theme_view(),
+        };
+        if let Some(bridge) = &self.bridge {
+            bridge.publish(&view, &self.cache);
         }
+        view
     }
 
     fn subscriptions(&self) -> Subscription<Message> {
@@ -1780,8 +2026,235 @@ impl Backend {
         }
     }
 
+    fn next_bridge(&self) -> Command<Message> {
+        let Some(bridge) = &self.bridge else {
+            return Command::none();
+        };
+        let requests = Arc::clone(&bridge.requests);
+        Command::perform(
+            async move { requests.lock().await.recv().await },
+            |request| match request {
+                Some(request) => Message::Internal(Internal::Bridge(request)),
+                None => Message::Internal(Internal::Noop),
+            },
+        )
+    }
+
+    fn handle_bridge(&mut self, request: BridgeRequest) -> Command<Message> {
+        match request {
+            BridgeRequest::Control(event) => self.handle_control(event),
+            BridgeRequest::Search { keyword, reply } => {
+                let service = self.service.clone();
+                let results = Arc::clone(&self.search_results);
+                let limit = self.config.search_limit;
+                tokio::spawn(async move {
+                    let entries = match service.search_songs(&keyword, limit).await {
+                        ContentState::Songs(songs) => {
+                            if let Ok(mut cached) = results.lock() {
+                                for song in &songs {
+                                    cached.insert(song.id, Arc::clone(song));
+                                }
+                            }
+                            songs
+                                .iter()
+                                .map(|song| SearchEntry::from_song(song, "netease"))
+                                .collect()
+                        }
+                        _ => Vec::new(),
+                    };
+                    let _ = reply.send(entries);
+                });
+                Command::none()
+            }
+        }
+    }
+
+    fn handle_control(&mut self, event: IpcEvent) -> Command<Message> {
+        match event {
+            IpcEvent::Previous => {
+                self.engine.prev();
+                Command::none()
+            }
+            IpcEvent::Next => {
+                self.engine.next();
+                Command::none()
+            }
+            IpcEvent::Pause => {
+                if self.engine.state.playing && !self.engine.state.paused {
+                    self.engine.toggle_pause();
+                }
+                Command::none()
+            }
+            IpcEvent::Play { song_id } => {
+                if let Some(id) = song_id {
+                    let mut played = self.engine.play_song_by_id(id);
+                    if !played {
+                        let song = self
+                            .search_results
+                            .lock()
+                            .ok()
+                            .and_then(|results| results.get(&id).cloned());
+                        if let Some(song) = song {
+                            self.engine.append_and_play_key(
+                                NCM_SEARCH_QUEUE_KEY,
+                                std::slice::from_ref(&song),
+                                0,
+                            );
+                            played = true;
+                        }
+                    }
+                    if played {
+                        let name = self
+                            .engine
+                            .current_song()
+                            .map(|song| song.name.clone())
+                            .unwrap_or_default();
+                        self.banner = Banner {
+                            text: format!("正在播放：{name}"),
+                            error: false,
+                        };
+                    } else {
+                        self.banner = Banner {
+                            text: format!("找不到 id={id} 的歌曲"),
+                            error: true,
+                        };
+                    }
+                } else if self.engine.state.paused || !self.engine.state.playing {
+                    self.engine.toggle_pause();
+                }
+                Command::none()
+            }
+            IpcEvent::TogglePlay => {
+                self.engine.toggle_pause();
+                Command::none()
+            }
+            IpcEvent::Volume { delta, absolute } => {
+                let volume = absolute.unwrap_or(self.engine.state.volume + delta.unwrap_or(0.0));
+                self.engine.set_volume(volume.clamp(0.0, 1.0));
+                Command::none()
+            }
+            IpcEvent::Seek { value } => {
+                match parse_seek(&value) {
+                    Ok(SeekTarget::Fraction(fraction)) => self.engine.seek_to_fraction(fraction),
+                    Ok(SeekTarget::Relative(seconds)) => self.engine.seek_relative(seconds),
+                    Ok(SeekTarget::Absolute(seconds)) => {
+                        let duration = self
+                            .engine
+                            .current_song()
+                            .map(|song| song.duration as f64 / 1000.0)
+                            .unwrap_or(0.0);
+                        self.engine
+                            .seek_to_fraction((seconds / duration).clamp(0.0, 1.0));
+                    }
+                    Err(error) => {
+                        self.banner = Banner {
+                            text: error,
+                            error: true,
+                        };
+                    }
+                }
+                Command::none()
+            }
+            IpcEvent::Clear => {
+                self.engine.clear_queue();
+                Command::none()
+            }
+            IpcEvent::Mode => {
+                self.engine.cycle_mode();
+                Command::none()
+            }
+            IpcEvent::SetMode(mode) => {
+                self.engine.set_mode(mode);
+                Command::none()
+            }
+            IpcEvent::Like => {
+                if let Some(song) = self.engine.current_song()
+                    && !self.engine.state.liked
+                {
+                    return self.toggle_like(song.id);
+                }
+                Command::none()
+            }
+            IpcEvent::Dislike => {
+                if let Some(song) = self.engine.current_song() {
+                    let service = self.service.clone();
+                    tokio::spawn(async move {
+                        let _ = service.dislike_song(song.id).await;
+                    });
+                }
+                Command::none()
+            }
+            IpcEvent::ToggleLike => self
+                .engine
+                .current_song()
+                .map(|song| self.toggle_like(song.id))
+                .unwrap_or_else(Command::none),
+            IpcEvent::SwitchList { endpoint, playlist } => {
+                let service = self.service.clone();
+                let uid = self.user.as_ref().map(|user| user.uid);
+                let limit = self.config.search_limit;
+                let key = self
+                    .config
+                    .navigation
+                    .name_for_api(&endpoint)
+                    .unwrap_or_else(|| endpoint.clone());
+                let result_key = key.clone();
+                Command::perform(
+                    async move {
+                        let Some(api) = ApiEndpoint::parse(&endpoint) else {
+                            return Err(format!("未知端点：{endpoint}"));
+                        };
+                        let content = service.resolve_endpoint_content(api, uid, limit).await;
+                        let songs = match content {
+                            ContentState::Songs(songs) => songs,
+                            ContentState::SongLists(lists) => {
+                                let index = playlist.unwrap_or(1).saturating_sub(1);
+                                let Some(list) = lists.get(index) else {
+                                    return Err("歌单索引超出范围".into());
+                                };
+                                match service.load_playlist_detail(list.id, false, limit).await.0 {
+                                    ContentState::Songs(songs) => songs,
+                                    ContentState::Error(error) => return Err(error),
+                                    _ => return Err("歌单没有歌曲".into()),
+                                }
+                            }
+                            ContentState::TopLists(lists) => {
+                                let index = playlist.unwrap_or(1).saturating_sub(1);
+                                let Some(list) = lists.get(index) else {
+                                    return Err("排行榜索引超出范围".into());
+                                };
+                                match service.client().top_songs(list.id).await {
+                                    Ok(detail) => detail.songs.into_iter().map(Arc::new).collect(),
+                                    Err(error) => return Err(error.to_string()),
+                                }
+                            }
+                            ContentState::Error(error) => return Err(error),
+                            _ => return Err("该端点没有可播放的歌曲".into()),
+                        };
+                        if songs.is_empty() {
+                            Err("该端点没有歌曲".into())
+                        } else {
+                            Ok(songs)
+                        }
+                    },
+                    move |result| {
+                        Message::Internal(Internal::SwitchListLoaded {
+                            key: result_key.clone(),
+                            result,
+                        })
+                    },
+                )
+            }
+        }
+    }
+
     fn handle_internal(&mut self, internal: Internal) -> Command<Message> {
         match internal {
+            Internal::Bridge(request) => {
+                let next = self.next_bridge();
+                let handled = self.handle_bridge(request);
+                Command::batch([handled, next])
+            }
             Internal::UserLoaded(user) => {
                 self.loading = false;
                 if let Some(user) = user {
@@ -2097,6 +2570,56 @@ impl Backend {
                 self.queued_playlists.insert(playlist_id);
                 Command::none()
             }
+            Internal::PersonalFmLoaded { generation, result } => {
+                if generation != self.content_generation {
+                    return Command::none();
+                }
+                self.loading = false;
+                match result {
+                    Ok(songs) if songs.is_empty() => {
+                        self.content = Arc::new(ContentState::Empty);
+                        self.banner = Banner {
+                            text: "私人FM 暂无歌曲".into(),
+                            error: true,
+                        };
+                    }
+                    Ok(songs) => {
+                        self.content = Arc::new(ContentState::Songs(songs.clone()));
+                        self.engine.play_songs("私人FM", songs, 0);
+                        self.banner = Banner {
+                            text: "私人FM 已开始播放".into(),
+                            error: false,
+                        };
+                    }
+                    Err(error) => {
+                        self.content = Arc::new(ContentState::Error(error.clone()));
+                        self.banner = Banner {
+                            text: format!("私人FM：{error}"),
+                            error: true,
+                        };
+                    }
+                }
+                Command::none()
+            }
+            Internal::SwitchListLoaded { key, result } => {
+                match result {
+                    Ok(songs) => {
+                        let name = self.config.navigation.name_for_api(&key).unwrap_or(key);
+                        self.engine.load_songs(&name, songs, 0);
+                        self.banner = Banner {
+                            text: format!("已切换到：{name}"),
+                            error: false,
+                        };
+                    }
+                    Err(error) => {
+                        self.banner = Banner {
+                            text: format!("切换失败：{error}"),
+                            error: true,
+                        };
+                    }
+                }
+                Command::none()
+            }
             Internal::Tick => self.poll_tick(),
             Internal::Noop => Command::none(),
         }
@@ -2259,6 +2782,11 @@ async fn load_source(
         ContentSource::ArtistSongs(id) => (service.load_artist_songs(*id, limit).await, None),
         ContentSource::SimilarSongs(song_id) => (service.simi_song(*song_id).await, None),
         ContentSource::SimilarPlaylists(song_id) => (service.simi_playlists(*song_id).await, None),
+        ContentSource::PersonalFm => match service.personal_fm().await {
+            Ok(songs) if songs.is_empty() => (ContentState::Empty, None),
+            Ok(songs) => (ContentState::Songs(songs), None),
+            Err(error) => (ContentState::Error(error), None),
+        },
         ContentSource::Search(kind, query) => {
             let content = match kind {
                 SearchKind::Songs => service.search_songs(query, limit).await,
