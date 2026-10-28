@@ -304,7 +304,7 @@ cargo build --release
 交互式 `boxpigma` 与 `boxpigma-gui` 共用 `boxpigma::backend`：一个 actor 独占
 `ApiService`、`PlaybackEngine`、缓存、登录和导航状态；终端只发语义消息、收不可变快照。
 Tokio runtime、actor 启停和终端生命周期由 `ferriso-tui` 管理，GUI 由 `ferriso-gui`
-管理。依赖固定到 Ferriso `55d17458`（0.3.1，MIT）。
+管理。依赖固定到 Ferriso `8a2e201`（0.3.1，MIT）。
 
 ```text
 终端 ──Message──▶ backend actor ──Arc<View> 快照──▶ ratatui 终端
@@ -323,7 +323,7 @@ Tokio runtime、actor 启停和终端生命周期由 `ferriso-tui` 管理，GUI 
 ### 桌面界面（`boxpigma-gui`）
 
 GUI 的后端已经按 Ferriso 的 actor 模型抽成 `boxpigma::backend`，并直接依赖其
-`ferriso-core` 与 `ferriso-gui`（MIT，Git 依赖，0.3.1）：一个任务独占
+`ferriso-core` 与 `ferriso-gui`（MIT，Git 依赖 `8a2e201`，0.3.1）：一个任务独占
 `ApiService`、`PlaybackEngine`、缓存、登录和导航状态，窗口只发语义消息、收只读快照；
 Tokio runtime、actor 启停和 iced 窗口生命周期都由 Ferriso 的 adapter 管理。
 
