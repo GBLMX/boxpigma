@@ -1375,15 +1375,17 @@ mod tests {
         assert_eq!(tui.symbols.spinner_activity[0], "=      ");
     }
     #[test]
-    fn spectrum_draws_at_the_six_row_playerbar_height() {
+    fn spectrum_expands_a_legacy_five_row_playerbar() {
         use ferriso_tui::ratatui::{Terminal, backend::TestBackend};
 
         let mut config = Config::default();
-        config.panes.playerbar = 6;
+        config.panes.playerbar = 5;
         config.symbols.preset = crate::config::SymbolPreset::Unicode;
         let mut tui = Tui::new(&config);
         let mut view = view();
         view.settings.visualizer = true;
+        view.panes.playerbar = 5;
+        view.player.volume = 0.0;
         view.player.visualizer = vec![1.0; 32];
         let glyph = tui
             .symbols
@@ -1406,7 +1408,7 @@ mod tests {
         };
         assert!(
             contains(glyph.as_str()),
-            "the spectrum must be visible at playerbar = 6"
+            "the spectrum must be visible at a legacy playerbar = 5"
         );
         assert!(contains(icon.as_str()), "the spectrum icon must be visible");
     }

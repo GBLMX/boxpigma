@@ -23,6 +23,12 @@ use super::{
     Focus, Hit, SETTINGS, Tui, artist_count, ensure_visible, field_value, login_fields, palette,
 };
 
+/// A compact player bar needs one title row, the gauge, controls, and the
+/// spectrum inside its border. Older configs still carry the previous
+/// five-row default, so expand only the effective layout; never rewrite the
+/// user's pane size.
+const SPECTRUM_PLAYERBAR_ROWS: u16 = 6;
+
 pub(super) fn draw(tui: &mut Tui, view: &View, frame: &mut Frame) {
     let palette = palette(view);
     let area = frame.area();
@@ -44,6 +50,9 @@ pub(super) fn draw(tui: &mut Tui, view: &View, frame: &mut Frame) {
     let mut panes = view.panes.clone();
     if let Some((pane, size)) = tui.pane_preview {
         panes.set_size(pane, size);
+    }
+    if view.settings.visualizer {
+        panes.playerbar = panes.playerbar.max(SPECTRUM_PLAYERBAR_ROWS);
     }
     let shell = crate::layout::shell(shell_area, &panes, view.nav_position);
     tui.shell_area = shell_area;
