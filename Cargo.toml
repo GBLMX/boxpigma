@@ -50,9 +50,9 @@ flate2 = { version = "1.1.10", default-features = false, features = ["rust_backe
 futures = { version = "0.3.33", default-features = false, features = ["async-await", "std"] }
 # The actor contract is owned by the Ferriso framework; pin the revision so a
 # release build resolves the same code.
-ferriso-core = { git = "https://github.com/GBLMX/Ferriso", rev = "8a2e20116264267c1fdd765fbef58089b4e0e3ed", package = "ferriso-core" }
-ferriso-gui = { git = "https://github.com/GBLMX/Ferriso", rev = "8a2e20116264267c1fdd765fbef58089b4e0e3ed", package = "ferriso-gui" }
-ferriso-tui = { git = "https://github.com/GBLMX/Ferriso", rev = "8a2e20116264267c1fdd765fbef58089b4e0e3ed", package = "ferriso-tui" }
+ferriso-core = { git = "https://github.com/GBLMX/Ferriso", rev = "6791fa728400fdca331f9ee9f2a8dff982345f19", package = "ferriso-core" }
+ferriso-gui = { git = "https://github.com/GBLMX/Ferriso", rev = "6791fa728400fdca331f9ee9f2a8dff982345f19", package = "ferriso-gui" }
+ferriso-tui = { git = "https://github.com/GBLMX/Ferriso", rev = "6791fa728400fdca331f9ee9f2a8dff982345f19", package = "ferriso-tui" }
 # The desktop frontend (`src/bin/boxpigma-gui`). `image-without-codecs` adds the image widget
 # (JPEG decoding comes from this crate's own `image` dependency above), `qr_code` draws the
 # NetEase login QR (the API only offers QR/phone login), and `tokio` gives iced a tokio executor
