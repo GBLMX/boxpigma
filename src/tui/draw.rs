@@ -790,16 +790,18 @@ fn draw_lyrics(
             Style::default().fg(p.text)
         };
         let text = format!("  {} ", lyric.text);
-        let text_len = text.chars().count();
+        let text_width = UnicodeWidthStr::width(text.as_str());
         if Some(index) == current && style != crate::config::LyricStyle::Plain {
+            let mut column = 0usize;
             let spans = text
                 .chars()
-                .enumerate()
-                .map(|(position, ch)| {
-                    Span::styled(
+                .map(|ch| {
+                    let span = Span::styled(
                         ch.to_string(),
-                        line_style.fg(shimmer.color_at(position, text_len, lyric_time)),
-                    )
+                        line_style.fg(shimmer.color_at(column, text_width, lyric_time)),
+                    );
+                    column = column.saturating_add(UnicodeWidthChar::width(ch).unwrap_or(0));
+                    span
                 })
                 .collect::<Vec<_>>();
             lines.push(Line::from(spans));
