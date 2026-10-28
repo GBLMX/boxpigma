@@ -114,7 +114,7 @@ boxpigma msg [OPTIONS] <ACTION> [VALUE]
 | 动作 | 别名 | 说明 |
 |---|---|---|
 | `play` | | 播放/恢复；`play <ID>` 跳到队列中指定歌曲并播放 |
-| `search <KEYWORD>` | | 搜索并**返回**歌曲数据（请求/响应，非 fire-and-forget）；搜索网易云，每行标 `source` 与 `id`，并注册到守护进程，随后 `play <ID>` 即可播放选中的那首 |
+| `search <KEYWORD>` | | 搜索并**返回**歌曲数据（请求/响应，非 fire-and-forget）；搜索网易云，每行标 `source` 与 `id`，并注册到运行实例，随后 `play <ID>` 即可播放选中的那首 |
 | `toggle_play` | `play_pause` | 播放/暂停切换（停止时开始） |
 | `pause` | | 暂停 |
 | `next` | | 下一首 |
@@ -135,7 +135,7 @@ boxpigma msg [OPTIONS] <ACTION> [VALUE]
 ```bash
 boxpigma msg play
 boxpigma msg play 187186        # 按歌曲 id 播放（`boxpigma status -L` 的行尾就是 id）
-boxpigma msg search 周杰伦       # 返回: source + id + 歌名 - 歌手（在守护进程内搜索，跨实例可用）
+boxpigma msg search 周杰伦       # 返回: source + id + 歌名 - 歌手（在运行实例内搜索，跨实例可用）
 boxpigma msg play 33894312      # 播放上面搜到的某首
 boxpigma msg toggle_play
 boxpigma msg next
@@ -204,7 +204,7 @@ printf '{"cmd":"status"}\n' | socat - "$HOME/.cache/boxpigma/boxpigma.sock"
 printf '{"cmd":"list"}\n' | socat - "$HOME/.cache/boxpigma/boxpigma.sock"
 # 问能力（回一行 JSON：契约版本 + 程序版本 + 动作清单 + socket 路径）
 printf '{"cmd":"capabilities"}\n' | socat - "$HOME/.cache/boxpigma/boxpigma.sock"
-# 搜索（回一行 JSON 数组，结果已注册到守护进程，可直接 play 其 id）
+# 搜索（回一行 JSON 数组，结果已注册到运行实例，可直接 play 其 id）
 printf '{"cmd":"search","keyword":"周杰伦"}\n' | socat - "$HOME/.cache/boxpigma/boxpigma.sock"
 # 播放控制（注意嵌套的 action 对象）
 printf '{"cmd":"msg","action":{"action":"next"}}\n' | socat - "$HOME/.cache/boxpigma/boxpigma.sock"
