@@ -1210,10 +1210,11 @@ fn draw_player(
         Span::styled(format!("  ·  {album}"), p.hint()),
         Span::styled(format!("   {mode_name}"), p.hint()),
     ]);
+    let detail_visible = info_area.height >= 5;
     frame.render_widget(
         Paragraph::new(vec![title_line, detail_line]),
         Rect {
-            height: 2.min(info_area.height),
+            height: if detail_visible { 2 } else { 1 },
             ..info_area
         },
     );
@@ -1229,7 +1230,7 @@ fn draw_player(
         let volume = format!("{icon} 音量 {:>3.0}%", view.player.volume * 100.0);
         let volume_area = Rect {
             x: info_area.right().saturating_sub(13),
-            y: info_area.y + 1,
+            y: info_area.y + u16::from(detail_visible),
             width: 13,
             height: 1,
         };
@@ -1240,9 +1241,10 @@ fn draw_player(
         tui.areas.hits.push((volume_area, Hit::Volume));
     }
 
-    if info_area.height >= 3 {
+    let gauge_y = info_area.y + if detail_visible { 2 } else { 1 };
+    if gauge_y < info_area.bottom() {
         let gauge_area = Rect {
-            y: info_area.y + 2,
+            y: gauge_y,
             height: 1,
             ..info_area
         };
@@ -1259,9 +1261,10 @@ fn draw_player(
         tui.areas.hits.push((gauge_area, Hit::Gauge));
     }
 
-    if info_area.height >= 4 {
+    let controls_y = gauge_y.saturating_add(1);
+    if controls_y < info_area.bottom() {
         let controls_area = Rect {
-            y: info_area.y + 3,
+            y: controls_y,
             height: 1,
             ..info_area
         };
@@ -1286,27 +1289,43 @@ fn draw_player(
         }
     }
 
-    if view.settings.visualizer && !view.player.visualizer.is_empty() && info_area.height >= 5 {
-        let width = info_area.width.saturating_sub(2) as usize;
-        let bars = view
-            .player
-            .visualizer
-            .iter()
-            .take(width)
-            .map(|value| {
-                let bars: Vec<char> = tui.symbols.visualizer_bars.chars().collect();
-                let index = ((*value).clamp(0.0, 1.0) * (bars.len() - 1) as f32).round() as usize;
-                bars[index]
-            })
-            .collect::<String>();
-        frame.render_widget(
-            Paragraph::new(format!(" {bars}")).style(Style::default().fg(p.accent)),
-            Rect {
-                y: info_area.bottom().saturating_sub(1),
-                height: 1,
-                ..info_area
-            },
-        );
+    let spectrum_y = controls_y.saturating_add(1);
+    if view.settings.visualizer && spectrum_y < info_area.bottom() {
+        let glyphs: Vec<char> = tui.symbols.visualizer_bars.chars().collect();
+        let icon = &tui.symbols.visualizer_icon;
+        let prefix = format!(" {icon} ");
+        let prefix_width = UnicodeWidthStr::width(prefix.as_str()) as u16;
+        let width = info_area.width.saturating_sub(prefix_width) as usize;
+        if glyphs.len() >= 2 && width > 0 {
+            let levels = &view.player.visualizer;
+            let mut spans = Vec::with_capacity(width + 1);
+            spans.push(Span::styled(
+                prefix,
+                Style::default().fg(p.accent).add_modifier(Modifier::BOLD),
+            ));
+            for column in 0..width {
+                let level = if levels.is_empty() {
+                    0.0
+                } else {
+                    let band = (column * levels.len() / width).min(levels.len() - 1);
+                    levels[band].clamp(0.0, 1.0)
+                };
+                let index =
+                    ((level * (glyphs.len() - 1) as f32).round() as usize).min(glyphs.len() - 1);
+                spans.push(Span::styled(
+                    glyphs[index].to_string(),
+                    Style::default().fg(art::mix(p.muted, p.accent, level)),
+                ));
+            }
+            frame.render_widget(
+                Paragraph::new(Line::from(spans)),
+                Rect {
+                    y: spectrum_y,
+                    height: 1,
+                    ..info_area
+                },
+            );
+        }
     }
 
     if let Some(pitch) = &view.player.pitch {

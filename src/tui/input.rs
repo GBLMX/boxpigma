@@ -1374,4 +1374,40 @@ mod tests {
         assert_eq!(tui.symbols.visualizer_bars, " .:-=+*#");
         assert_eq!(tui.symbols.spinner_activity[0], "=      ");
     }
+    #[test]
+    fn spectrum_draws_at_the_six_row_playerbar_height() {
+        use ferriso_tui::ratatui::{Terminal, backend::TestBackend};
+
+        let mut config = Config::default();
+        config.panes.playerbar = 6;
+        config.symbols.preset = crate::config::SymbolPreset::Unicode;
+        let mut tui = Tui::new(&config);
+        let mut view = view();
+        view.settings.visualizer = true;
+        view.player.visualizer = vec![1.0; 32];
+        let glyph = tui
+            .symbols
+            .visualizer_bars
+            .chars()
+            .last()
+            .expect("bars")
+            .to_string();
+        let icon = tui.symbols.visualizer_icon.clone();
+
+        let mut terminal = Terminal::new(TestBackend::new(80, 24)).expect("test backend");
+        terminal
+            .draw(|frame| crate::tui::draw::draw(&mut tui, &view, frame))
+            .expect("draw");
+
+        let buffer = terminal.backend().buffer();
+        let contains = |needle: &str| {
+            (0..buffer.area.height)
+                .any(|y| (0..buffer.area.width).any(|x| buffer[(x, y)].symbol() == needle))
+        };
+        assert!(
+            contains(glyph.as_str()),
+            "the spectrum must be visible at playerbar = 6"
+        );
+        assert!(contains(icon.as_str()), "the spectrum icon must be visible");
+    }
 }

@@ -55,7 +55,7 @@ pub const DEFAULT_TOPBAR: u16 = 3;
 /// Cells the navigation takes by default: its width as a column.
 pub const DEFAULT_NAVIGATION: u16 = 26;
 /// Rows the player bar takes by default.
-pub const DEFAULT_PLAYERBAR: u16 = 5;
+pub const DEFAULT_PLAYERBAR: u16 = 6;
 
 /// Per-pane sizes and the collapsed list.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

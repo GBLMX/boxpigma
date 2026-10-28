@@ -47,6 +47,8 @@ pub struct SymbolsConfig {
     pub translation: Option<String>,
     /// Spectrum bar characters, lowest first (at least two).
     pub visualizer_bars: Option<String>,
+    /// Icon written before the spectrum bars.
+    pub visualizer_icon: Option<String>,
     /// Spinner frames, one per animation step; an empty list is ignored.
     pub spinner_activity: Option<Vec<String>>,
     /// Main-loop ticks per spinner frame (the UI has always advanced every 3 ticks).
@@ -81,6 +83,8 @@ pub struct Symbols {
     pub translation: String,
     /// Spectrum bar characters from shortest to tallest.
     pub visualizer_bars: String,
+    /// Icon written before the spectrum bars.
+    pub visualizer_icon: String,
     pub spinner_activity: Vec<String>,
     pub spinner_ticks_per_frame: u64,
     pub title_open: String,
@@ -125,6 +129,7 @@ impl SymbolPreset {
             (SymbolPreset::Nerd, "volume_mid") => "\u{f027}",
             (SymbolPreset::Nerd, "volume_high") => "\u{f028}",
             (SymbolPreset::Nerd, "queue_clear") => "\u{f48e}",
+            (SymbolPreset::Nerd, "visualizer_icon") => "\u{f001}",
             // Half blocks read like the capsule ends without a patched font.
             (SymbolPreset::Unicode, "nav_capsule_left") => "▐",
             (SymbolPreset::Unicode, "nav_capsule_right") => "▌",
@@ -132,12 +137,14 @@ impl SymbolPreset {
             (SymbolPreset::Unicode, "volume_mid") => "♫",
             (SymbolPreset::Unicode, "volume_high") => "♬",
             (SymbolPreset::Unicode, "queue_clear") => "∅",
+            (SymbolPreset::Unicode, "visualizer_icon") => "♫",
             (SymbolPreset::Ascii, "nav_capsule_left") => "[",
             (SymbolPreset::Ascii, "nav_capsule_right") => "]",
             (SymbolPreset::Ascii, "volume_low") => "-",
             (SymbolPreset::Ascii, "volume_mid") => "=",
             (SymbolPreset::Ascii, "volume_high") => "#",
             (SymbolPreset::Ascii, "queue_clear") => "x",
+            (SymbolPreset::Ascii, "visualizer_icon") => "~",
             // The arrows a title is written between, and the markers of a notice or a task: these
             // are the ones the UI drew as literals, which is what made them impossible to switch
             // off on a terminal that cannot draw them.
@@ -217,6 +224,7 @@ impl Symbols {
             volume_high: pick(&config.volume_high, "volume_high"),
             queue_clear: pick(&config.queue_clear, "queue_clear"),
             translation: pick(&config.translation, "translation"),
+            visualizer_icon: pick(&config.visualizer_icon, "visualizer_icon"),
             title_open: pick(&config.title_open, "title_open"),
             title_close: pick(&config.title_close, "title_close"),
             submenu: pick(&config.submenu, "submenu"),
@@ -465,6 +473,7 @@ mod glyph_tests {
                 ("volume_high", &symbols.volume_high),
                 ("queue_clear", &symbols.queue_clear),
                 ("translation", &symbols.translation),
+                ("visualizer_icon", &symbols.visualizer_icon),
             ] {
                 assert!(!glyph.is_empty(), "{preset:?}: {key} is empty");
                 assert_eq!(
@@ -496,6 +505,7 @@ mod glyph_tests {
                 "task_running",
                 "task_done",
                 "task_failed",
+                "visualizer_icon",
             ] {
                 assert_ne!(preset.glyph(key), "?", "{preset:?} has no {key}");
             }

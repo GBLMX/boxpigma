@@ -555,7 +555,7 @@ journalctl --user -u boxpigma -f     # 日志
 | `lyric_style` / `lyric_gradient` | 歌词显示样式（`window` / `one_line` / `ktv` / `flow` / `plain`）与扫光渐变 |
 | `lyric_ktv_color` | `ktv` 样式的填充色：主题字段（`accent` / `text` …）或颜色本身（`blue` / `#4da6ff` / ANSI 序号） |
 | `lyric_translation` | 原文下面是否画译文（同 `y` ／`:translation on\|off`） |
-| `[symbols]` | 字形预设（`nerd`/`unicode`/`ascii`）与逐键覆盖：`nav_capsule_*`、`volume_*`、`queue_clear`、`translation`、`visualizer_bars`、`spinner_*`，以及标题/标记类 `title_open`/`title_close`（弹层与歌手页标题的箭头 `► … ◄`）、`submenu`/`selected`（命令面板）、`notice_info`/`notice_warn`/`notice_error`、`task_running`/`task_done`/`task_failed` |
+| `[symbols]` | 字形预设（`nerd`/`unicode`/`ascii`）与逐键覆盖：`nav_capsule_*`、`volume_*`、`queue_clear`、`translation`、`visualizer_bars`、`visualizer_icon`、`spinner_*`，以及标题/标记类 `title_open`/`title_close`（弹层与歌手页标题的箭头 `► … ◄`）、`submenu`/`selected`（命令面板）、`notice_info`/`notice_warn`/`notice_error`、`task_running`/`task_done`/`task_failed` |
 | 主题 schema | 同目录的 `theme.schema.json` 描述主题文件可写的每个键（编辑器用它做校验）；测试保证它不落后于代码 |
 | 主题 `[themes.*]` | 基础色之外可按**组件**细化：`[table]`（`header`/`row`/`selected`/`secondary`/`playing`）、`[tabs]`（`active`/`inactive`）、`[lyrics]`（`line`/`sung`/`translation`）、`[popup]`（`border`/`title`/`footer`）、`[notify]`（`info`/`warn`/`error`）；每一项是样式 `{ fg, bg, bold, italic, underline, reversed, dim }`，`fg`/`bg` 可写主题字段名或颜色，未写部分沿用该组件的默认样式 |
 | `[keys]` | 键位重绑：`命令名 = "键序列"`（单键或空格分隔的多键，可带 `ctrl+`/`alt+`），`""` 为解绑；不写＝用命令表自带的键 |
