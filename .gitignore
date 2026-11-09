@@ -6,3 +6,4 @@ cookies.json
 
 # 编辑器/工具留下的备份文件
 *.bak
+.vscode/
